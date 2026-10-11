@@ -1518,7 +1518,7 @@ async def process_deposit_amount(message: Message, state: FSMContext):
             f"• سيتم إضافة {amount_in_syp:,} SYP لرصيدك\n"
             f"• الرصيد الجديد: {current_balance + amount_in_syp:,} ل.س جديدة\n"
             f"• يرجى الحفظ الدقيق لبيانات التحويل\n\n"
-            f"📬 <b>الآن أرسل إثبات التحويل:</b> صورة الإيصال أو رقم العملية ↘️"
+            f"🔢 <b>الآن أرسل رقم العملية فقط:</b> أرقام فقط بدون صورة أو إيصال ↘️"
         )
 
         confirm_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1553,6 +1553,15 @@ async def process_deposit_amount(message: Message, state: FSMContext):
 # معالج الإثبات (معدل لاستخدام المبلغ المحسوب مسبقاً)
 @router.message(BotStates.entering_deposit_proof)
 async def process_deposit_proof(message: Message, state: FSMContext):
+    # أماناً ودقةً في التحقق الآلي: شحن رصيد البوت يعتمد على رقم العملية فقط.
+    # الصور والملفات والإيصالات لم تعد تُقبل في هذا المسار.
+    if not message.text or not message.text.strip().isdigit():
+        await message.reply(
+            "⛔ يرجى إرسال <b>رقم العملية فقط</b> كأرقام، بدون صورة أو إيصال أو نص إضافي.",
+            parse_mode="HTML",
+        )
+        return
+
     username = message.from_user.username or message.from_user.first_name
 
     data = await state.get_data()
@@ -1571,12 +1580,7 @@ async def process_deposit_proof(message: Message, state: FSMContext):
             amount_to_save_syp = amount
 
     photo_id = None
-    transfer_number = "مكتوب داخل الإيصال"
-
-    if message.photo:
-        photo_id = message.photo[-1].file_id
-    elif message.text:
-        transfer_number = message.text.strip()
+    transfer_number = message.text.strip()
 
     short_tx_code = "JUDE-D-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
