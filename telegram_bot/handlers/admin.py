@@ -1931,13 +1931,17 @@ async def adm_users_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not await ensure_admin_callback(callback):
         return
     await state.clear()
-    total = await asyncio.to_thread(repo.get_total_users_count)
-    today = await asyncio.to_thread(repo.get_new_users_today)
+    stats = await asyncio.to_thread(repo.get_user_management_stats)
     await safe_edit_text(
         callback.message,
         f"🔍 <b>إدارة المستخدمين</b>\n\n"
-        f"🧑‍🤝‍🧑 <b>إجمالي المسجّلين:</b> <code>{total:,}</code>\n"
-        f"🌟 <b>جدد اليوم:</b> <code>{today}</code>\n\n"
+        f"🧑‍🤝‍🧑 <b>إجمالي المسجّلين:</b> <code>{stats['total_users']:,}</code>\n"
+        f"🌟 <b>جدد اليوم:</b> <code>{stats['new_users_today']:,}</code>\n"
+        f"🟢 <b>المستخدمون النشطون:</b> <code>{stats['active_users']:,}</code>\n"
+        f"⚪ <b>المستخدمون الخاملون:</b> <code>{stats['inactive_users']:,}</code>\n"
+        f"🎮 <b>لديهم حساب iChancy:</b> <code>{stats['ichancy_users']:,}</code>\n"
+        f"➖ <b>بدون حساب iChancy:</b> <code>{stats['non_ichancy_users']:,}</code>\n\n"
+        f"<i>النشاط محسوب حسب وجود حركة خلال آخر 7 أيام.</i>\n\n"
         f"أرسل الآن <b>Telegram ID</b> أو <b>اسم المستخدم</b> للبحث عنه ↘️",
         parse_mode="HTML"
     )

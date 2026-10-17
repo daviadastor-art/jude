@@ -2543,6 +2543,41 @@ def get_new_users_today():
     return int(result[0]) if result else 0
 
 
+def get_user_management_stats():
+    """إحصائيات مختصرة لمركز إدارة المستخدمين.
+
+    المستخدم النشط هو من لديه أي حركة مسجلة خلال آخر 7 أيام؛
+    وبذلك يكون تعريف النشاط ثابتاً وقابلاً للقياس من قاعدة البيانات.
+    """
+    query = """
+    WITH activity AS (
+        SELECT DISTINCT user_telegram_id
+        FROM transactions
+        WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+    )
+    SELECT
+        COUNT(*) AS total_users,
+        COUNT(*) FILTER (WHERE u.created_at::date = CURRENT_DATE) AS new_users_today,
+        COUNT(*) FILTER (WHERE a.user_telegram_id IS NOT NULL) AS active_users,
+        COUNT(*) FILTER (WHERE a.user_telegram_id IS NULL) AS inactive_users,
+        COUNT(*) FILTER (WHERE NULLIF(TRIM(COALESCE(u.player_id, '')), '') IS NOT NULL
+                           OR NULLIF(TRIM(COALESCE(u.ichancy_username, '')), '') IS NOT NULL) AS ichancy_users,
+        COUNT(*) FILTER (WHERE NULLIF(TRIM(COALESCE(u.player_id, '')), '') IS NULL
+                           AND NULLIF(TRIM(COALESCE(u.ichancy_username, '')), '') IS NULL) AS non_ichancy_users
+    FROM users u
+    LEFT JOIN activity a ON a.user_telegram_id = u.telegram_id
+    """
+    row = DatabaseManager.execute_query_dict(query, fetch='one') or {}
+    return {
+        'total_users': int(row.get('total_users') or 0),
+        'new_users_today': int(row.get('new_users_today') or 0),
+        'active_users': int(row.get('active_users') or 0),
+        'inactive_users': int(row.get('inactive_users') or 0),
+        'ichancy_users': int(row.get('ichancy_users') or 0),
+        'non_ichancy_users': int(row.get('non_ichancy_users') or 0),
+    }
+
+
 def get_today_transactions_count():
     """عدد المعاملات المنفّذة اليوم."""
     result = DatabaseManager.execute_query(
