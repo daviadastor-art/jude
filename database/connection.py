@@ -409,12 +409,15 @@ class DatabaseManager:
             payment_method VARCHAR(50) DEFAULT 'all',
             min_amount_syp NUMERIC(15, 2) DEFAULT 0,
             max_bonus_syp NUMERIC(15, 2) DEFAULT 0,
+            first_deposit_only BOOLEAN DEFAULT FALSE,
             is_active BOOLEAN DEFAULT TRUE,
             created_by VARCHAR(50),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             disabled_at TIMESTAMP WITH TIME ZONE
         );
         """
+
+        alter_bonus_rules_first_deposit = "ALTER TABLE bonus_rules ADD COLUMN IF NOT EXISTS first_deposit_only BOOLEAN DEFAULT FALSE;"
 
         # 🆕 إعدادات عناوين الإيداع القابلة للتعديل من لوحة الأدمن
         payment_settings_table = """
@@ -813,6 +816,7 @@ class DatabaseManager:
             bot_settings_table,
             referral_commissions_table,
             bonus_rules_table,
+            alter_bonus_rules_first_deposit,
             payment_settings_table,
             cashier_profiles_table,
             cashier_switch_audit_table,

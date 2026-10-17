@@ -754,7 +754,7 @@ async def approve_dep_callback(callback: CallbackQuery):
     deposit_amount = int(float(tx['amount']))
 
     # 1) أفضل بونص عام/فلاش فقط (لا يتراكمان)
-    bonus_info = await asyncio.to_thread(repo.calculate_best_deposit_bonus, deposit_amount, tx.get('payment_method'))
+    bonus_info = await asyncio.to_thread(repo.calculate_best_deposit_bonus, deposit_amount, tx.get('payment_method'), tx.get('user_telegram_id'))
     public_bonus_amount = int(bonus_info.get('bonus_amount') or 0)
     bonus_rule = bonus_info.get('rule')
 
@@ -796,7 +796,9 @@ async def approve_dep_callback(callback: CallbackQuery):
         bonus_amount=bonus_amount,
         tx_id=tx_id,
         reviewed_by=callback.from_user.id,
-        new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None
+        new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None,
+        public_bonus_amount=public_bonus_amount,
+        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only'))
     )
     if not result.get('ok'):
         logger.error(f"approve_deposit_atomic failed for tx #{tx_id}: {result.get('reason')}")

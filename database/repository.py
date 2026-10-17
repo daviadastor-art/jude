@@ -571,7 +571,7 @@ def complete_oxapay_payment_atomic(payload):
             conn.rollback()
             return {'ok': False, 'reason': 'invalid_amount'}
         deposit_added = int(float(amount_syp or 0))
-        bonus = calculate_best_deposit_bonus(deposit_added, payment_method)
+        bonus = calculate_best_deposit_bonus(deposit_added, payment_method, telegram_id=telegram_id)
         bonus_added = int(bonus.get('bonus_amount') or 0)
         cursor.execute("SELECT bot_balance FROM users WHERE telegram_id = %s FOR UPDATE", (str(telegram_id),))
         if not cursor.fetchone():
@@ -1119,7 +1119,7 @@ def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=N
             DatabaseManager.put_connection(conn)
 
 
-def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, reviewed_by=None, new_vip_tier=None):
+def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, reviewed_by=None, new_vip_tier=None, public_bonus_amount=None, first_deposit_bonus=False):
     """اعتماد إيداع بشكل ذري كامل: القفل + الإضافة + التعليم.
 
     تنفّذ داخل معاملة واحدة لا تُخترق:
@@ -1159,6 +1159,15 @@ def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, rev
         if not cursor.fetchone():
             conn.rollback()
             return {'ok': False, 'reason': 'user_not_found'}
+
+        # الحماية الذرية: عرض «المستخدمين الجدد» يُمنح فقط إذا لم يسبق للمستخدم إيداع مقبول.
+        if first_deposit_bonus:
+            cursor.execute(
+                "SELECT 1 FROM transactions WHERE user_telegram_id = %s AND type = 'deposit_bot' AND status = 'approved' AND id <> %s LIMIT 1",
+                (tid, int(tx_id))
+            )
+            if cursor.fetchone():
+                bonus_added = max(0, bonus_added - int(public_bonus_amount or 0))
 
         # 3) إضافة ذرّية: الإيداع النقدي → bot_balance ، والبونص → bonus_balance (مقيّد)
         # ونضيف deposit_added إلى bonus_base_balance فقط إذا وُجد بونص، ليُصرف البونص نسبياً عند شحن اللعبة.
@@ -2295,15 +2304,15 @@ def transfer_affiliate_balance_to_bot(telegram_id):
 
 # ==================== 🎁 البونصات والعروض ====================
 
-def create_bonus_rule(title, percent, payment_method='all', min_amount_syp=0, max_bonus_syp=0, created_by=None):
+def create_bonus_rule(title, percent, payment_method='all', min_amount_syp=0, max_bonus_syp=0, first_deposit_only=False, created_by=None):
     query = """
-    INSERT INTO bonus_rules (title, percent, payment_method, min_amount_syp, max_bonus_syp, is_active, created_by)
-    VALUES (%s, %s, %s, %s, %s, TRUE, %s)
+    INSERT INTO bonus_rules (title, percent, payment_method, min_amount_syp, max_bonus_syp, first_deposit_only, is_active, created_by)
+    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)
     RETURNING id
     """
     result = DatabaseManager.execute_query(
         query,
-        (title, float(percent), payment_method or 'all', float(min_amount_syp or 0), float(max_bonus_syp or 0), str(created_by) if created_by else None),
+        (title, float(percent), payment_method or 'all', float(min_amount_syp or 0), float(max_bonus_syp or 0), bool(first_deposit_only), str(created_by) if created_by else None),
         fetch='one'
     )
     return result[0] if result else None
@@ -2362,7 +2371,7 @@ def get_bonus_rule(rule_id):
     )
 
 
-def update_bonus_rule(rule_id, title=None, percent=None, payment_method=None, min_amount_syp=None, max_bonus_syp=None):
+def update_bonus_rule(rule_id, title=None, percent=None, payment_method=None, min_amount_syp=None, max_bonus_syp=None, first_deposit_only=None):
     """تحديث عرض بونص موجود."""
     rule = get_bonus_rule(rule_id)
     if not rule:
@@ -2372,19 +2381,20 @@ def update_bonus_rule(rule_id, title=None, percent=None, payment_method=None, mi
     new_payment_method = payment_method if payment_method is not None else rule.get('payment_method')
     new_min = min_amount_syp if min_amount_syp is not None else rule.get('min_amount_syp')
     new_max = max_bonus_syp if max_bonus_syp is not None else rule.get('max_bonus_syp')
+    new_first_deposit_only = first_deposit_only if first_deposit_only is not None else bool(rule.get('first_deposit_only', False))
     query = """
     UPDATE bonus_rules
-    SET title = %s, percent = %s, payment_method = %s, min_amount_syp = %s, max_bonus_syp = %s
+    SET title = %s, percent = %s, payment_method = %s, min_amount_syp = %s, max_bonus_syp = %s, first_deposit_only = %s
     WHERE id = %s
     """
     DatabaseManager.execute_query(
         query,
-        (new_title, float(new_percent), new_payment_method or 'all', float(new_min or 0), float(new_max or 0), rule_id)
+        (new_title, float(new_percent), new_payment_method or 'all', float(new_min or 0), float(new_max or 0), bool(new_first_deposit_only), rule_id)
     )
     return True
 
 
-def calculate_best_deposit_bonus(amount_syp, payment_method):
+def calculate_best_deposit_bonus(amount_syp, payment_method, telegram_id=None):
     """حساب أفضل بونص ينطبق على الإيداع.
 
     البونصات تطبق فقط حسب طريقة الإيداع والحد الأدنى، وإذا انطبق أكثر من عرض
@@ -2420,7 +2430,17 @@ def calculate_best_deposit_bonus(amount_syp, payment_method):
         'total_amount': int(amount),
     }
 
+    has_previous_approved_deposit = False
+    if telegram_id is not None:
+        previous = DatabaseManager.execute_query(
+            "SELECT 1 FROM transactions WHERE user_telegram_id = %s AND type = 'deposit_bot' AND status = 'approved' LIMIT 1",
+            (str(telegram_id),), fetch='one'
+        )
+        has_previous_approved_deposit = bool(previous)
+
     for rule in get_active_bonus_rules():
+        if bool(rule.get('first_deposit_only', False)) and has_previous_approved_deposit:
+            continue
         rule_method = normalize(rule.get('payment_method'))
         if rule_method != 'all' and rule_method != method:
             continue

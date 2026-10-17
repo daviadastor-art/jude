@@ -919,7 +919,7 @@ async def auto_approve_cash_deposit(bot, tx_id, external_ref=None, provider_labe
         return {'ok': False, 'reason': 'external_ref_used'}
 
     # أفضل بونص عام/فلاش
-    bonus_info = await asyncio.to_thread(repo.calculate_best_deposit_bonus, deposit_amount, tx.get('payment_method'))
+    bonus_info = await asyncio.to_thread(repo.calculate_best_deposit_bonus, deposit_amount, tx.get('payment_method'), tx.get('user_telegram_id'))
     public_bonus_amount = int(bonus_info.get('bonus_amount') or 0)
     bonus_rule = bonus_info.get('rule')
 
@@ -955,7 +955,9 @@ async def auto_approve_cash_deposit(bot, tx_id, external_ref=None, provider_labe
         bonus_amount=bonus_amount,
         tx_id=tx_id,
         reviewed_by=reviewer,
-        new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None
+        new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None,
+        public_bonus_amount=public_bonus_amount,
+        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only'))
     )
     if not result.get('ok') or result.get('already_approved'):
         return {'ok': False, 'reason': result.get('reason') or 'approve_failed'}

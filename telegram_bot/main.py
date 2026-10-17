@@ -2188,6 +2188,7 @@ def _bonus_rule_to_json(rule):
         'payment_method': rule.get('payment_method'),
         'min_amount_syp': float(rule.get('min_amount_syp') or 0),
         'max_bonus_syp': float(rule.get('max_bonus_syp') or 0),
+        'first_deposit_only': bool(rule.get('first_deposit_only', False)),
         'is_active': bool(rule.get('is_active')),
         'created_by': rule.get('created_by'),
         'created_at': rule.get('created_at').strftime('%Y-%m-%d %H:%M') if rule.get('created_at') else '',
@@ -2284,6 +2285,7 @@ async def admin_bonuses_handler(request):
             payment_method = (payload.get('payment_method') or 'all').strip()
             min_amount_syp = int(str(payload.get('min_amount_syp') or '0').replace(',', ''))
             max_bonus_syp = int(str(payload.get('max_bonus_syp') or '0').replace(',', ''))
+            first_deposit_only = str(payload.get('first_deposit_only', False)).lower() in ('1', 'true', 'yes', 'on')
             if len(title) < 3:
                 return web.json_response({'error': 'اسم العرض قصير جداً'}, status=400)
             if percent <= 0 or percent > 100:
@@ -2298,7 +2300,7 @@ async def admin_bonuses_handler(request):
             withdraw_commission = float(commission_raw if commission_raw is not None else 0)
             if percent > withdraw_commission:
                 return web.json_response({'error': f'🚧 نسبة البونص ({percent}%) أعلى من عمولة السحب ({withdraw_commission}%). يمكن للمستخدم الإيداع والسحب فوراً ليربح! يجب أن يكون البونص أقل من العمولة.'}, status=400)
-            rule_id = await asyncio.to_thread(repo.create_bonus_rule, title, percent, payment_method, min_amount_syp, max_bonus_syp, created_by='miniapp')
+            rule_id = await asyncio.to_thread(repo.create_bonus_rule, title, percent, payment_method, min_amount_syp, max_bonus_syp, first_deposit_only, created_by='miniapp')
             return web.json_response({'ok': True, 'rule_id': rule_id})
 
         if action == 'disable_bonus':
@@ -2323,6 +2325,7 @@ async def admin_bonuses_handler(request):
             payment_method = (payload.get('payment_method') or 'all').strip()
             min_amount_syp = int(str(payload.get('min_amount_syp') or '0').replace(',', ''))
             max_bonus_syp = int(str(payload.get('max_bonus_syp') or '0').replace(',', ''))
+            first_deposit_only = str(payload.get('first_deposit_only', False)).lower() in ('1', 'true', 'yes', 'on')
             if len(title) < 3:
                 return web.json_response({'error': 'اسم العرض قصير جداً'}, status=400)
             if percent <= 0 or percent > 100:
@@ -2337,7 +2340,7 @@ async def admin_bonuses_handler(request):
             withdraw_commission = float(commission_raw if commission_raw is not None else 0)
             if percent > withdraw_commission:
                 return web.json_response({'error': f'🚧 نسبة البونص ({percent}%) أعلى من عمولة السحب ({withdraw_commission}%). يمكن للمستخدم الإيداع والسحب فوراً ليربح! يجب أن يكون البونص أقل من العمولة.'}, status=400)
-            await asyncio.to_thread(repo.update_bonus_rule, rule_id, title=title, percent=percent, payment_method=payment_method, min_amount_syp=min_amount_syp, max_bonus_syp=max_bonus_syp)
+            await asyncio.to_thread(repo.update_bonus_rule, rule_id, title=title, percent=percent, payment_method=payment_method, min_amount_syp=min_amount_syp, max_bonus_syp=max_bonus_syp, first_deposit_only=first_deposit_only)
             return web.json_response({'ok': True})
 
         if action == 'process_affiliate_commissions':
