@@ -176,6 +176,9 @@ class AdminStates(StatesGroup):
     setting_balance = State()
     user_amount = State()
     user_message = State()
+    # 📣 البث الجماعي من أزرار الأدمن
+    broadcast_title = State()
+    broadcast_message = State()
     # 🌟 (Update 18) لوحة المتصدرين الأسبوعية
     entering_lb_prize_1 = State()
     entering_lb_prize_2 = State()
@@ -196,6 +199,7 @@ def get_admin_keyboard():
         [premium_button(text="🏷️ نسبة عمولة السحب", callback_data="adm_comm_menu")],
         [premium_button(text="🕹️ رصيد محفظة الوكيل الفعلي", callback_data="adm_agent_bal")],
         [premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses")],
+        [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [
             premium_button(text="🎟️ إنشاء كود هدية", callback_data="adm_create_bot_gift"),
             premium_button(text="🧧 البونصات والعروض", callback_data="adm_bonus_menu")
@@ -220,6 +224,7 @@ def get_admin_dashboard_keyboard(refresh_callback="caesar_control_panel"):
             premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses"),
             premium_button(text="📈 تحديث السيولة", callback_data="adm_sync_liquidity")
         ],
+        [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [
             premium_button(text="🧪 فحص النبض والمحاكاة", callback_data="adm_system_probe"),
             premium_button(text="🔁 تصفير حسابي الاختباري", callback_data="adm_reset_my_test_balance")
@@ -1920,6 +1925,190 @@ async def process_bot_gift_amount(message: Message, state: FSMContext):
         f"🪙 القيمة: <code>{amount:,} SYP</code>"
     )
     await state.clear()
+
+
+# ================================================================
+# 📣 إرسال الرسائل للمستخدمين من أزرار الأدمن
+# ================================================================
+
+_BROADCAST_TYPES = {
+    'announcement': '📣 إعلان عام',
+    'alert': '🚧 تنبيه',
+    'maintenance': '🛠️ صيانة',
+    'offer': '🧧 عرض',
+    'update': '✨ تحديث',
+}
+
+_BROADCAST_AUDIENCES = {
+    'all': 'كل المستخدمين',
+    'accepted_terms': 'المستخدمون الذين وافقوا على الشروط',
+    'ichancy': 'المستخدمون الذين لديهم حساب iChancy',
+    'balance': 'المستخدمون الذين لديهم رصيد',
+}
+
+
+def _broadcast_setup_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text=label, callback_data=f"adm_bc_type_{key}")]
+        for key, label in _BROADCAST_TYPES.items()
+    ] + [[premium_button(text="↩️ إلغاء", callback_data="caesar_control_panel")]])
+
+
+def _broadcast_audience_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text=label, callback_data=f"adm_bc_audience_{key}")]
+        for key, label in _BROADCAST_AUDIENCES.items()
+    ] + [[premium_button(text="↩️ إلغاء", callback_data="caesar_control_panel")]])
+
+
+def _broadcast_review_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text="🧑‍🤝‍🧑 عدد المستلمين", callback_data="adm_bc_count"),
+         premium_button(text="🧪 إرسال تجربة لنفسي", callback_data="adm_bc_test")],
+        [premium_button(text="🛫 تأكيد الإرسال", callback_data="adm_bc_send")],
+        [premium_button(text="✏️ تعديل الرسالة", callback_data="adm_broadcast"),
+         premium_button(text="⛔ إلغاء", callback_data="caesar_control_panel")],
+    ])
+
+
+def _broadcast_text_for_bot(title, message, message_type):
+    icons = {
+        'announcement': '📣', 'alert': '🚧', 'maintenance': '🛠️',
+        'offer': '🧧', 'update': '✨',
+    }
+    return f"{icons.get(message_type, '📣')} {title}\n\n{message}"
+
+
+async def _send_admin_broadcast(bot, data, admin_id):
+    """إرسال نفس بث التطبيق مع الحفاظ على HTML entities والإيموجيات المميزة."""
+    audience = data.get('broadcast_audience', 'all')
+    message_type = data.get('broadcast_type', 'announcement')
+    title = html.escape(str(data.get('broadcast_title') or 'تنبيه من الإدارة'))
+    message = str(data.get('broadcast_message_html') or '')
+    text = _broadcast_text_for_bot(title, message, message_type)
+    targets = await asyncio.to_thread(repo.get_broadcast_targets, audience=audience, limit=20000)
+    broadcast_id = await asyncio.to_thread(
+        repo.create_broadcast, title, message, audience, message_type,
+        created_by=admin_id, total_targets=len(targets)
+    )
+    if broadcast_id:
+        await asyncio.to_thread(repo.update_broadcast_status, broadcast_id, 'sending', started=True)
+    sent = failed = 0
+    last_error = None
+    for telegram_id in targets:
+        try:
+            await bot.send_message(chat_id=telegram_id, text=text, parse_mode='HTML')
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            last_error = str(exc)[:300]
+        if (sent + failed) % 25 == 0 and broadcast_id:
+            await asyncio.to_thread(repo.update_broadcast_status, broadcast_id, 'sending', sent_count=sent, failed_count=failed, last_error=last_error)
+        await asyncio.sleep(0.18)
+    if broadcast_id:
+        await asyncio.to_thread(repo.update_broadcast_status, broadcast_id, 'finished', sent_count=sent, failed_count=failed, last_error=last_error, finished=True)
+    return len(targets), sent, failed
+
+
+@router.callback_query(F.data == "adm_broadcast")
+async def admin_broadcast_start_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    await state.clear()
+    await safe_edit_text(callback.message, "📣 <b>إرسال رسالة للمستخدمين</b>\n\nاختر نوع الرسالة:", reply_markup=_broadcast_setup_keyboard())
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("adm_bc_type_"))
+async def admin_broadcast_type_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    message_type = callback.data.replace('adm_bc_type_', '', 1)
+    if message_type not in _BROADCAST_TYPES:
+        await safe_answer_callback(callback, 'نوع رسالة غير صالح.', show_alert=True)
+        return
+    await state.update_data(broadcast_type=message_type)
+    await safe_edit_text(callback.message, "📣 <b>اختيار الجمهور</b>\n\nإلى من تريد إرسال الرسالة؟", reply_markup=_broadcast_audience_keyboard())
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("adm_bc_audience_"))
+async def admin_broadcast_audience_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    audience = callback.data.replace('adm_bc_audience_', '', 1)
+    if audience not in _BROADCAST_AUDIENCES:
+        await safe_answer_callback(callback, 'جمهور غير صالح.', show_alert=True)
+        return
+    await state.update_data(broadcast_audience=audience)
+    await safe_edit_text(callback.message, "📝 أرسل عنوان الرسالة الآن:\n\nمثال: <code>تنبيه من الإدارة</code>", parse_mode='HTML')
+    await state.set_state(AdminStates.broadcast_title)
+    await safe_answer_callback(callback)
+
+
+@router.message(AdminStates.broadcast_title)
+async def admin_broadcast_title_message(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state):
+        return
+    title = (message.text or '').strip()
+    if not title or len(title) > 200:
+        await message.answer('⛔ أرسل عنواناً صحيحاً لا يتجاوز 200 محرف.')
+        return
+    await state.update_data(broadcast_title=title)
+    await message.answer('✍️ أرسل نص الرسالة الآن. يمكنك استخدام الإيموجيات المميزة والتنسيق كما تريد، وسيصل النص بنفس الشكل للمستخدمين.')
+    await state.set_state(AdminStates.broadcast_message)
+
+
+@router.message(AdminStates.broadcast_message)
+async def admin_broadcast_message_message(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state):
+        return
+    raw_text = message.text or message.caption or ''
+    if not raw_text.strip() or len(raw_text) > 3500:
+        await message.answer('⛔ الرسالة فارغة أو أطول من الحد المسموح (3500 محرف).')
+        return
+    # html_text يحول custom_emoji entities إلى tg-emoji ويحافظ على التنسيق.
+    message_html = getattr(message, 'html_text', None) or getattr(message, 'html_caption', None) or html.escape(raw_text)
+    await state.update_data(broadcast_message_html=message_html)
+    data = await state.get_data()
+    preview = _broadcast_text_for_bot(html.escape(str(data.get('broadcast_title') or 'تنبيه من الإدارة')), message_html, data.get('broadcast_type', 'announcement'))
+    await message.answer(
+        f"👁️ <b>معاينة الرسالة</b>\n\n{preview}\n\n"
+        f"👥 الجمهور: <b>{_BROADCAST_AUDIENCES.get(data.get('broadcast_audience'), '—')}</b>\n\nاختر الإجراء:",
+        reply_markup=_broadcast_review_keyboard(), parse_mode='HTML'
+    )
+
+
+@router.callback_query(F.data.in_({"adm_bc_count", "adm_bc_test", "adm_bc_send"}))
+async def admin_broadcast_action_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    data = await state.get_data()
+    if not data.get('broadcast_message_html'):
+        await safe_answer_callback(callback, 'أنشئ الرسالة أولاً.', show_alert=True)
+        return
+    action = callback.data.replace('adm_bc_', '')
+    audience = data.get('broadcast_audience', 'all')
+    message_type = data.get('broadcast_type', 'announcement')
+    title = html.escape(str(data.get('broadcast_title') or 'تنبيه من الإدارة'))
+    text = _broadcast_text_for_bot(title, data['broadcast_message_html'], message_type)
+    if action == 'count':
+        targets = await asyncio.to_thread(repo.get_broadcast_targets, audience=audience, limit=20000)
+        await safe_answer_callback(callback, f"عدد المستلمين: {len(targets):,}", show_alert=True)
+        return
+    if action == 'test':
+        try:
+            await callback.bot.send_message(chat_id=callback.from_user.id, text=text, parse_mode='HTML')
+            await safe_answer_callback(callback, '✔️ وصلت رسالة التجربة إلى محادثتك.', show_alert=True)
+        except Exception as exc:
+            logger.warning('Admin broadcast test failed: %s', exc)
+            await safe_answer_callback(callback, '⛔ فشل إرسال التجربة.', show_alert=True)
+        return
+    await safe_edit_text(callback.message, '🛫 جاري الإرسال التدريجي للمستخدمين...')
+    total, sent, failed = await _send_admin_broadcast(callback.bot, data, callback.from_user.id)
+    await state.clear()
+    await safe_edit_text(callback.message, f"✔️ <b>اكتمل إرسال الرسالة</b>\n\n👥 المستهدفون: <code>{total:,}</code>\n✅ تم الإرسال: <code>{sent:,}</code>\n⛔ فشل: <code>{failed:,}</code>", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[premium_button(text='🏡 لوحة التحكم', callback_data='caesar_control_panel')]]))
+    await safe_answer_callback(callback)
 
 
 # ================================================================
