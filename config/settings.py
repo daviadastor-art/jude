@@ -39,8 +39,8 @@ DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() == 'tru
 AGENT_BALANCE_ALERT_THRESHOLD = int(os.getenv('AGENT_BALANCE_ALERT_THRESHOLD', '100000'))
 
 # Support Handles
-SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/JudeRobert')
-SUPPORT_USERNAME = os.getenv('SUPPORT_USERNAME', '@JudeRobert')
+SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/jooooood')
+SUPPORT_USERNAME = os.getenv('SUPPORT_USERNAME', '@jooooood')
 
 # Public iChancy Links
 WEBSITE_URL = os.getenv('WEBSITE_URL', 'https://www.ichancy100.com')

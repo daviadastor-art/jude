@@ -52,7 +52,7 @@ def get_main_menu_keyboard(is_admin=False):
             premium_button(text="🔁 السجل", callback_data="history_menu")
         ],
         [
-            premium_button(text="🗂️ رسالة للإدارة", url=getattr(settings, 'SUPPORT_LINK', 'https://t.me/JudeRobert')),
+            premium_button(text="🗂️ رسالة للإدارة", url=getattr(settings, 'SUPPORT_LINK', 'https://t.me/jooooood')),
             premium_button(text="📨 تواصل معنا", url=getattr(settings, 'FORCE_SUBSCRIPTION_INVITE_URL', 'https://t.me/Jude_1Jude'))
         ],
         [
