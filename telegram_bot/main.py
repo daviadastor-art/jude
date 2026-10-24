@@ -1361,23 +1361,14 @@ async def admin_settings_post_handler(request):
                 syp_version = 'old'
             referrals_enabled_raw = payload.get('referrals_enabled', True)
             referrals_enabled = str(referrals_enabled_raw).lower() in ('1', 'true', 'yes', 'on') if not isinstance(referrals_enabled_raw, bool) else referrals_enabled_raw
-            if exchange_rate <= 0 or usd_buy_rate <= 0 or usd_sell_rate <= 0 or withdraw_commission < 0 or game_min_deposit_syp < 1 or agent_revenue_percent < 0 or game_bonus_apply_percent < 0 or min_deposit_syp < 1 or min_deposit_usd < 1 or min_withdraw_syp < 1 or min_withdraw_usd < 1:
+            if exchange_rate <= 0 or usd_buy_rate <= 0 or usd_sell_rate <= 0 or withdraw_commission < 0 or game_min_deposit_syp < 1 or agent_revenue_percent < 0 or game_bonus_apply_percent < 0 or game_bonus_apply_percent > 100 or min_deposit_syp < 1 or min_deposit_usd < 1 or min_withdraw_syp < 1 or min_withdraw_usd < 1:
                 return web.json_response({'error': 'قيم غير صالحة'}, status=400)
             current_settings = await asyncio.to_thread(repo.get_bot_settings) or {}
             current_buy_rate = float(current_settings.get('usd_buy_rate') or usd_buy_rate)
             current_sell_rate = float(current_settings.get('usd_sell_rate') or usd_sell_rate)
-            current_bonus_raw = current_settings.get('game_bonus_apply_percent')
-            current_commission_raw = current_settings.get('withdraw_commission')
-            current_bonus_percent = float(current_bonus_raw if current_bonus_raw is not None else game_bonus_apply_percent)
-            current_commission = float(current_commission_raw if current_commission_raw is not None else withdraw_commission)
             rates_changed = (
                 usd_buy_rate != current_buy_rate or usd_sell_rate != current_sell_rate
             )
-            bonus_rules_changed = (
-                game_bonus_apply_percent != current_bonus_percent or withdraw_commission != current_commission
-            )
-            if bonus_rules_changed and game_bonus_apply_percent > withdraw_commission:
-                return web.json_response({'error': f'🚧 نسبة إرفاق بونص اللعبة ({game_bonus_apply_percent}%) يجب ألا تتجاوز عمولة السحب ({withdraw_commission}%).'}, status=400)
             # 🔐 حماية السبريد (Update 9): سعر الإيداع يجب أن يكون أقل من سعر السحب
             # لمنع المراجحة المالية (المستخدم يودع دولار ثم يسحبه بربح).
             if rates_changed and usd_buy_rate >= usd_sell_rate:
@@ -2294,12 +2285,6 @@ async def admin_bonuses_handler(request):
                 return web.json_response({'error': 'طريقة دفع غير معروفة'}, status=400)
             if min_amount_syp < 0 or max_bonus_syp < 0:
                 return web.json_response({'error': 'القيم المالية غير صالحة'}, status=400)
-            # 🔐 حماية المراجحة (Update 9): البونص يجب ألا يتجاوز عمولة السحب
-            settings_for_bonus = await asyncio.to_thread(repo.get_bot_settings)
-            commission_raw = settings_for_bonus.get('withdraw_commission')
-            withdraw_commission = float(commission_raw if commission_raw is not None else 0)
-            if percent > withdraw_commission:
-                return web.json_response({'error': f'🚧 نسبة البونص ({percent}%) أعلى من عمولة السحب ({withdraw_commission}%). يمكن للمستخدم الإيداع والسحب فوراً ليربح! يجب أن يكون البونص أقل من العمولة.'}, status=400)
             rule_id = await asyncio.to_thread(repo.create_bonus_rule, title, percent, payment_method, min_amount_syp, max_bonus_syp, first_deposit_only, created_by='miniapp')
             return web.json_response({'ok': True, 'rule_id': rule_id})
 
@@ -2334,12 +2319,6 @@ async def admin_bonuses_handler(request):
                 return web.json_response({'error': 'طريقة دفع غير معروفة'}, status=400)
             if min_amount_syp < 0 or max_bonus_syp < 0:
                 return web.json_response({'error': 'القيم المالية غير صالحة'}, status=400)
-            # 🔐 حماية المراجحة (Update 9): البونص يجب ألا يتجاوز عمولة السحب
-            settings_for_bonus = await asyncio.to_thread(repo.get_bot_settings)
-            commission_raw = settings_for_bonus.get('withdraw_commission')
-            withdraw_commission = float(commission_raw if commission_raw is not None else 0)
-            if percent > withdraw_commission:
-                return web.json_response({'error': f'🚧 نسبة البونص ({percent}%) أعلى من عمولة السحب ({withdraw_commission}%). يمكن للمستخدم الإيداع والسحب فوراً ليربح! يجب أن يكون البونص أقل من العمولة.'}, status=400)
             await asyncio.to_thread(repo.update_bonus_rule, rule_id, title=title, percent=percent, payment_method=payment_method, min_amount_syp=min_amount_syp, max_bonus_syp=max_bonus_syp, first_deposit_only=first_deposit_only)
             return web.json_response({'ok': True})
 
@@ -3252,11 +3231,8 @@ async def admin_flash_handler(request):
             payment_method = _normalize_flash_payment_method(payload.get('payment_method'))
             if not payment_method:
                 return web.json_response({'error': 'طريقة الدفع غير صالحة لفلاش البونص'}, status=400)
-            settings_for_bonus = await asyncio.to_thread(repo.get_bot_settings)
-            commission_raw = settings_for_bonus.get('withdraw_commission')
-            withdraw_commission = float(commission_raw if commission_raw is not None else 0)
-            if percent <= 0 or percent > withdraw_commission:
-                return web.json_response({'error': f'النسبة يجب أن تكون أقل من عمولة السحب ({withdraw_commission}%)'}, status=400)
+            if percent <= 0 or percent > 100:
+                return web.json_response({'error': 'نسبة الفلاش يجب أن تكون أكبر من 0 وألا تتجاوز 100%'}, status=400)
             if duration < 1 or duration > 1440:
                 return web.json_response({'error': 'المدة غير صالحة (1-1440 دقيقة)'}, status=400)
             await asyncio.to_thread(repo.stop_flash_bonus)  # إيقاف أي فلاش نشط سابق
