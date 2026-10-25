@@ -75,7 +75,7 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
         with patch.object(repository.DatabaseManager, "get_connection", return_value=connection), \
                 patch.object(repository.DatabaseManager, "put_connection"):
             result = repository.settle_game_withdraw_with_active_bonus(
-                "user-1", withdraw_amount=300, tx_id=8
+                "user-1", withdraw_amount=30_000, tx_id=8
             )
 
         self.assertTrue(result["ok"])
@@ -84,7 +84,7 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
         self.assertEqual(result["game_bonus_amount"], 200)
         user_update, params = cursor.executed[1]
         self.assertIn("GREATEST(COALESCE(game_balance, 0) - %s, 0)", user_update)
-        self.assertEqual(params, (300, 300, "user-1"))
+        self.assertEqual(params, (300, 30_000, "user-1"))
         self.assertTrue(connection.committed)
 
 

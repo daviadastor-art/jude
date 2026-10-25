@@ -759,8 +759,8 @@ async def withdraw_from_player_game(
     amount_nsp: Decimal,
     bot
 ) -> bool:
-    """سحب مبلغ من حساب اللاعب في اللعبة (NSP) إلى رصيد البوت (SYP).
-    النسبة الثابتة: 1 NSP = 1 SYP
+    """سحب مبلغ من حساب اللاعب (ليرة قديمة) إلى رصيد البوت (ليرة جديدة).
+    التحويل: كل 100 ليرة قديمة = 1 ليرة جديدة.
 
     🔐 آمن ذرياً (Update 3): نسجل المعاملة pending أولاً، ثم نستدعي الـ API،
     ثم نضيف الرصيد فقط عند النجاح. مستحيل ضياع/تضاعف المبلغ.
@@ -782,8 +782,8 @@ async def withdraw_from_player_game(
 
         # 🧧 لا يوجد تدوير الآن: بونص اللعبة النشط يُخصم من مبلغ السحب عند التسوية.
 
-        # 🌟 النسبة الثابتة 1 NSP = 1 SYP
-        amount_syp = int(amount_nsp)
+        # iChancy يستخدم الليرة القديمة، ورصيد البوت يخزن الليرة الجديدة.
+        amount_syp = int(old_to_new(amount_nsp))
 
         # 🔐 الخطوة 1: تسجيل المعاملة pending كدليل على العملية الجارية
         # (الرصيد لا يُضاف هنا بعد؛ يُضاف فقط عند نجاح الـ API)
@@ -821,7 +821,7 @@ async def withdraw_from_player_game(
             return False
 
         # 🔐 الخطوة 3: نجح الـ API → إضافة كامل المبلغ لرصيد البوت
-        settlement = await asyncio.to_thread(repo.settle_game_withdraw_with_active_bonus, user_id, amount_syp, tx_id=tx_id)
+        settlement = await asyncio.to_thread(repo.settle_game_withdraw_with_active_bonus, user_id, amount_nsp, tx_id=tx_id)
         if not settlement.get('ok'):
             logger.error(f"⛔ settlement failed after iChancy withdraw: {settlement}")
             return {'success': False, 'reason': 'settlement_failed'}

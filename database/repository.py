@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from psycopg2.extras import Json
 from database.connection import DatabaseManager
+from config.currency import old_to_new
 
 logger = logging.getLogger(__name__)
 
@@ -986,11 +987,17 @@ def credit_balance_atomic(telegram_id, amount):
 
 
 def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=None):
-    """تسوية سحب اللعبة كرصد طبيعي كامل بلا خصم للبونص."""
+    """تسوية سحب اللعبة مع تحويل NSP القديمة إلى SYP الجديدة.
+
+    ``withdraw_amount`` هو مبلغ iChancy بالليرة القديمة، بينما رصيد البوت
+    مخزّن بالليرة الجديدة. لذلك 20,000 قديمة تُضاف كـ200 جديدة فقط.
+    """
     conn = cursor = None
     tid = str(telegram_id)
-    amount_int = int(float(withdraw_amount or 0))
-    if amount_int <= 0: return {'ok': False, 'reason': 'invalid_amount'}
+    game_amount_old = int(float(withdraw_amount or 0))
+    cash_amount_new = int(old_to_new(game_amount_old))
+    if game_amount_old <= 0 or cash_amount_new <= 0:
+        return {'ok': False, 'reason': 'invalid_amount'}
     try:
         conn = DatabaseManager.get_connection(); cursor = conn.cursor()
         cursor.execute("SELECT bot_balance, game_bonus_amount FROM users WHERE telegram_id = %s FOR UPDATE", (tid,))
@@ -1001,17 +1008,17 @@ def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=N
             SET bot_balance = COALESCE(bot_balance, 0) + %s,
                 game_balance = GREATEST(COALESCE(game_balance, 0) - %s, 0)
             WHERE telegram_id = %s
-            RETURNING bot_balance, game_balance, game_bonus_amount""", (amount_int, amount_int, tid))
+            RETURNING bot_balance, game_balance, game_bonus_amount""", (cash_amount_new, game_amount_old, tid))
         updated = cursor.fetchone()
         if tx_id:
             cursor.execute("""UPDATE transactions SET status='completed', reviewed_at=CURRENT_TIMESTAMP,
                 original_amount=%s, converted_amount_syp=%s,
                 transfer_number=COALESCE(transfer_number,'') || %s WHERE id=%s""",
-                (amount_int, amount_int, f' | credited_full={amount_int}', int(tx_id)))
+                (game_amount_old, cash_amount_new, f' | credited_full_new={cash_amount_new}', int(tx_id)))
         conn.commit()
-        return {'ok': True, 'withdraw_amount': amount_int, 'active_bonus_before': active_bonus,
+        return {'ok': True, 'withdraw_amount': game_amount_old, 'cash_amount_new': cash_amount_new, 'active_bonus_before': active_bonus,
                 'bonus_deducted': 0, 'active_bonus_after': active_bonus,
-                'cash_credited': amount_int, 'old_balance': int(row[0] or 0),
+                'cash_credited': cash_amount_new, 'old_balance': int(row[0] or 0),
                 'new_balance': int(updated[0] or 0), 'new_game_balance': int(updated[1] or 0),
                 'game_bonus_amount': int(updated[2] or 0)}
     except Exception as e:
