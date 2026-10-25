@@ -579,11 +579,9 @@ def complete_oxapay_payment_atomic(payload):
             return {'ok': False, 'reason': 'user_not_found'}
         cursor.execute(
             """UPDATE users
-                  SET bot_balance = COALESCE(bot_balance, 0) + %s,
-                      bonus_balance = COALESCE(bonus_balance, 0) + %s,
-                      bonus_base_balance = COALESCE(bonus_base_balance, 0) + %s
+                  SET bot_balance = COALESCE(bot_balance, 0) + %s
                 WHERE telegram_id = %s RETURNING bot_balance""",
-            (deposit_added, bonus_added, deposit_added if bonus_added > 0 else 0, str(telegram_id))
+            (deposit_added + bonus_added, str(telegram_id))
         )
         new_balance = int(cursor.fetchone()[0] or 0)
         txs = payload.get('txs') or []
@@ -728,142 +726,82 @@ def create_withdraw_transaction_atomic(telegram_id, amount, payment_method=None,
 
 
 def calculate_game_bonus_for_deposit(amount, available_bonus=None, bonus_base_balance=None):
-    """حساب بونص اللعب المرفق عند شحن حساب iChancy.
+    """حساب بونص شحن اللعبة الحقيقي وفق إعداد الأدمن.
 
-    إذا كان البونص مرتبطاً بإيداع: شحن كامل مبلغ الإيداع يصرف كامل البونص،
-    وشحن نصفه يصرف نصف البونص. إذا لم توجد قاعدة ربط نستخدم نسبة الإرفاق من الإعدادات كاحتياط.
+    الوسيطان القديمان محفوظان للتوافق فقط؛ البونص لا يُسحب من bonus_balance
+    ولا يتحول إلى game_bonus_amount، بل يصل كرصد طبيعي إلى iChancy.
     """
     amount_int = int(float(amount or 0))
-    available_bonus_int = int(float(available_bonus or 0)) if available_bonus is not None else 0
-    base_int = int(float(bonus_base_balance or 0)) if bonus_base_balance is not None else 0
-    if amount_int <= 0 or available_bonus_int <= 0:
+    if amount_int <= 0:
         return 0
     settings = get_bot_settings() or {}
-    enabled = True if settings.get('game_bonus_enabled') is None else bool(settings.get('game_bonus_enabled'))
-    if not enabled:
+    if settings.get('game_bonus_enabled') is False:
         return 0
-    if base_int > 0:
-        bonus = int(amount_int * available_bonus_int / base_int)
-    else:
-        # 🔧 إصلاح جوهري: عندما يكون رصيد قاعدة البونص (base_int) صفراً (مثل مكافآت الكاش باك، الهدايا، والحضور)،
-        # يتم إرفاق البونص المتاح (available_bonus_int) مع الإيداع النقدي (حتى 100% من قيمة الإيداع النقدي)
-        # لضمان وصول رصيد المكافآت إلى حساب اللعبة الفعلي وعدم تجميده بنسبة 10% فقط.
-        pct = float(settings.get('game_bonus_apply_percent', 100))
-        if pct <= 0:
-            pct = 100.0
-        pct_bonus = int(amount_int * (pct / 100.0))
-        bonus = max(pct_bonus, min(available_bonus_int, amount_int))
-    return max(0, min(available_bonus_int, bonus))
-
-
+    percent = float(settings.get('game_bonus_apply_percent', 0) or 0)
+    return max(0, int(amount_int * percent / 100.0))
 
 
 def reserve_game_deposit_atomic(telegram_id, amount, player_id):
-    """حجز شحن لعبة ذري مع إرفاق بونص اللعب تلقائياً."""
-    conn = None
-    cursor = None
+    """حجز مبلغ الشحن النقدي وبونصه الحقيقي بشكل ذري."""
+    conn = cursor = None
     tid = str(telegram_id)
     cash_amount = int(float(amount))
-
     if cash_amount <= 0:
         return {'success': False, 'reason': 'invalid_amount', 'message': 'Invalid amount'}
-
     try:
         conn = DatabaseManager.get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT bot_balance, bonus_balance, bonus_base_balance, cashback_pending_balance, checkin_pending_balance FROM users WHERE telegram_id = %s FOR UPDATE",
+            "SELECT bot_balance, cashback_pending_balance, checkin_pending_balance FROM users WHERE telegram_id = %s FOR UPDATE",
             (tid,)
         )
-        user_row = cursor.fetchone()
-        if not user_row:
-            conn.rollback()
-            return {'success': False, 'reason': 'not_found', 'message': 'User not found'}
-
-        old_balance = int(user_row[0] or 0)
-        old_bonus_balance = int(user_row[1] or 0)
-        old_bonus_base_balance = int(user_row[2] or 0)
-        cashback_amount = int(user_row[3] or 0)
-        checkin_amount = int(user_row[4] or 0)
-        bonus_amount = calculate_game_bonus_for_deposit(cash_amount, old_bonus_balance, old_bonus_base_balance)
-        base_consumed = min(cash_amount, old_bonus_base_balance) if bonus_amount > 0 else 0
+        row = cursor.fetchone()
+        if not row:
+            conn.rollback(); return {'success': False, 'reason': 'not_found', 'message': 'User not found'}
+        old_balance = int(row[0] or 0)
+        cashback_amount, checkin_amount = int(row[1] or 0), int(row[2] or 0)
+        bonus_amount = calculate_game_bonus_for_deposit(cash_amount)
         total_to_game = cash_amount + bonus_amount + cashback_amount + checkin_amount
-
         cursor.execute(
-            """
-            UPDATE users
-            SET bot_balance = COALESCE(bot_balance, 0) - %s,
-                bonus_balance = COALESCE(bonus_balance, 0) - %s,
-                bonus_base_balance = GREATEST(0, COALESCE(bonus_base_balance, 0) - %s),
-                cashback_pending_balance = 0,
-                checkin_pending_balance = 0
-            WHERE telegram_id = %s AND COALESCE(bot_balance, 0) >= %s AND COALESCE(bonus_balance, 0) >= %s
-            RETURNING bot_balance, bonus_balance, bonus_base_balance, cashback_pending_balance
-            """,
-            (cash_amount, bonus_amount, base_consumed, tid, cash_amount, bonus_amount)
+            """UPDATE users
+               SET bot_balance = COALESCE(bot_balance, 0) - %s,
+                   cashback_pending_balance = 0,
+                   checkin_pending_balance = 0
+             WHERE telegram_id = %s AND COALESCE(bot_balance, 0) >= %s
+             RETURNING bot_balance""",
+            (cash_amount, tid, cash_amount)
         )
         updated = cursor.fetchone()
         if not updated:
             conn.rollback()
-            return {
-                'success': False,
-                'reason': 'insufficient',
-                'message': 'Insufficient balance',
-                'old_balance': old_balance,
-                'old_bonus_balance': old_bonus_balance,
-            }
-
-        new_balance = int(updated[0] or 0)
-        new_bonus_balance = int(updated[1] or 0)
+            return {'success': False, 'reason': 'insufficient', 'message': 'Insufficient balance', 'old_balance': old_balance}
         cursor.execute(
-            """
-            INSERT INTO transactions (
-                user_telegram_id, type, payment_method, amount, transfer_number, status,
-                original_amount, original_currency, converted_amount_syp, external_ref, cashback_amount_syp, checkin_amount_syp
-            )
-            VALUES (%s, 'deposit_to_game', 'game', %s, %s, 'pending', %s, 'cash_syp', %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                tid,
-                total_to_game,
-                f'Game deposit for player {player_id} | cash={cash_amount} | bonus={bonus_amount} | cashback={cashback_amount} | checkin={checkin_amount} | total={total_to_game}',
-                cash_amount,
-                bonus_amount,
-                str(base_consumed),
-                cashback_amount,
-                checkin_amount,
-            )
+            """INSERT INTO transactions
+               (user_telegram_id, type, payment_method, amount, transfer_number, status,
+                original_amount, original_currency, converted_amount_syp, external_ref,
+                cashback_amount_syp, checkin_amount_syp)
+               VALUES (%s, 'deposit_to_game', 'game', %s, %s, 'pending', %s, 'cash_syp', %s, %s, %s, %s)
+               RETURNING id""",
+            (tid, total_to_game,
+             f'Game deposit for player {player_id} | cash={cash_amount} | real_bonus={bonus_amount} | cashback={cashback_amount} | checkin={checkin_amount} | total={total_to_game}',
+             cash_amount, bonus_amount, '', cashback_amount, checkin_amount)
         )
         tx_id = cursor.fetchone()[0]
         conn.commit()
-        return {
-            'success': True,
-            'tx_id': tx_id,
-            'old_balance': old_balance,
-            'new_balance': new_balance,
-            'old_bonus_balance': old_bonus_balance,
-            'new_bonus_balance': new_bonus_balance,
-            'old_bonus_base_balance': old_bonus_base_balance,
-            'new_bonus_base_balance': int(updated[2] or 0) if len(updated) > 2 else 0,
-            'bonus_base_consumed': base_consumed,
-            'cash_amount': cash_amount,
-            'bonus_amount': bonus_amount,
-            'cashback_amount': cashback_amount,
-            'checkin_amount': checkin_amount,
-            'total_to_game': total_to_game,
-            'amount': cash_amount,
-        }
+        return {'success': True, 'tx_id': tx_id, 'old_balance': old_balance,
+                'new_balance': int(updated[0] or 0), 'old_bonus_balance': 0,
+                'new_bonus_balance': 0, 'old_bonus_base_balance': 0,
+                'new_bonus_base_balance': 0, 'bonus_base_consumed': 0,
+                'cash_amount': cash_amount, 'bonus_amount': bonus_amount,
+                'cashback_amount': cashback_amount, 'checkin_amount': checkin_amount,
+                'total_to_game': total_to_game, 'amount': cash_amount}
     except Exception as e:
-        if conn:
-            conn.rollback()
+        if conn: conn.rollback()
         logger.error(f"reserve_game_deposit_atomic error: {e}")
         return {'success': False, 'reason': 'error', 'message': str(e)}
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            DatabaseManager.put_connection(conn)
+        if cursor: cursor.close()
+        if conn: DatabaseManager.put_connection(conn)
 
 
 def confirm_reserved_game_deposit(tx_id, game_balance_credit=None):
@@ -898,19 +836,14 @@ def confirm_reserved_game_deposit(tx_id, game_balance_credit=None):
                 'game_balance': int(user_after[1] or 0),
                 'game_bonus_amount': int(user_after[2] or 0),
             }
-        bonus_int = int(float(bonus_amount or 0))
-        cashback_int = int(float(cashback_amount or 0))
-        checkin_int = int(float(checkin_amount or 0))
-        active_bonus_to_add = bonus_int + cashback_int + checkin_int
         cursor.execute(
             """
             UPDATE users
-            SET game_bonus_amount = COALESCE(game_bonus_amount, 0) + %s,
-                game_balance = COALESCE(game_balance, 0) + %s
+            SET game_balance = COALESCE(game_balance, 0) + %s
             WHERE telegram_id = %s
             RETURNING bot_balance, game_balance, game_bonus_amount
             """,
-            (active_bonus_to_add, int(game_balance_credit or 0), str(user_telegram_id))
+            (int(game_balance_credit or 0), str(user_telegram_id))
         )
         user_after = cursor.fetchone()
         if not user_after:
@@ -973,7 +906,6 @@ def revert_game_transaction(tx_id):
         if status == 'pending':
             if tx_type == 'deposit_to_game':
                 cash_refund = int(float(original_amount or amount or 0))
-                bonus_refund = int(float(converted_amount_syp or 0))
                 cashback_refund = int(float(cashback_amount_syp or 0))
                 checkin_refund = int(float(checkin_amount_syp or 0))
                 try:
@@ -981,8 +913,8 @@ def revert_game_transaction(tx_id):
                 except Exception:
                     base_refund = 0
                 cursor.execute(
-                    "UPDATE users SET bot_balance = COALESCE(bot_balance, 0) + %s, bonus_balance = COALESCE(bonus_balance, 0) + %s, bonus_base_balance = COALESCE(bonus_base_balance, 0) + %s, cashback_pending_balance = COALESCE(cashback_pending_balance, 0) + %s, checkin_pending_balance = COALESCE(checkin_pending_balance, 0) + %s WHERE telegram_id = %s",
-                    (cash_refund, bonus_refund, base_refund, cashback_refund, checkin_refund, str(user_telegram_id))
+                    "UPDATE users SET bot_balance = COALESCE(bot_balance, 0) + %s, cashback_pending_balance = COALESCE(cashback_pending_balance, 0) + %s, checkin_pending_balance = COALESCE(checkin_pending_balance, 0) + %s WHERE telegram_id = %s",
+                    (cash_refund, cashback_refund, checkin_refund, str(user_telegram_id))
                 )
             elif tx_type == 'bonus_to_game':
                 bonus_refund = int(float(amount or 0))
@@ -1054,69 +986,41 @@ def credit_balance_atomic(telegram_id, amount):
 
 
 def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=None):
-    """تسوية سحب اللعبة: خصم بونص اللعبة النشط أولاً، ثم إضافة الصافي إلى bot_balance."""
-    conn = None
-    cursor = None
+    """تسوية سحب اللعبة كرصد طبيعي كامل بلا خصم للبونص."""
+    conn = cursor = None
     tid = str(telegram_id)
     amount_int = int(float(withdraw_amount or 0))
-    if amount_int <= 0:
-        return {'ok': False, 'reason': 'invalid_amount'}
+    if amount_int <= 0: return {'ok': False, 'reason': 'invalid_amount'}
     try:
-        conn = DatabaseManager.get_connection()
-        cursor = conn.cursor()
+        conn = DatabaseManager.get_connection(); cursor = conn.cursor()
         cursor.execute("SELECT bot_balance, game_bonus_amount FROM users WHERE telegram_id = %s FOR UPDATE", (tid,))
         row = cursor.fetchone()
-        if not row:
-            conn.rollback()
-            return {'ok': False, 'reason': 'user_not_found'}
-        old_balance = int(row[0] or 0)
+        if not row: conn.rollback(); return {'ok': False, 'reason': 'user_not_found'}
         active_bonus = int(row[1] or 0)
-        consumed_bonus = min(active_bonus, amount_int)
-        cash_to_credit = max(0, amount_int - consumed_bonus)
-        remaining_bonus = max(0, active_bonus - consumed_bonus)
-        cursor.execute(
-            """UPDATE users
-               SET bot_balance = bot_balance + %s,
-                   game_bonus_amount = %s,
-                   game_balance = GREATEST(COALESCE(game_balance, 0) - %s, 0)
-               WHERE telegram_id = %s
-               RETURNING bot_balance, game_balance, game_bonus_amount""",
-            (cash_to_credit, remaining_bonus, amount_int, tid)
-        )
-        updated_user = cursor.fetchone()
-        new_balance = int(updated_user[0] or 0)
+        cursor.execute("""UPDATE users
+            SET bot_balance = COALESCE(bot_balance, 0) + %s,
+                game_balance = GREATEST(COALESCE(game_balance, 0) - %s, 0)
+            WHERE telegram_id = %s
+            RETURNING bot_balance, game_balance, game_bonus_amount""", (amount_int, amount_int, tid))
+        updated = cursor.fetchone()
         if tx_id:
-            cursor.execute(
-                """UPDATE transactions
-                   SET status = 'completed', reviewed_at = CURRENT_TIMESTAMP,
-                       original_amount = %s, converted_amount_syp = %s,
-                       transfer_number = COALESCE(transfer_number, '') || %s
-                   WHERE id = %s""",
-                (amount_int, cash_to_credit, f' | active_bonus_deducted={consumed_bonus} | credited={cash_to_credit}', int(tx_id))
-            )
+            cursor.execute("""UPDATE transactions SET status='completed', reviewed_at=CURRENT_TIMESTAMP,
+                original_amount=%s, converted_amount_syp=%s,
+                transfer_number=COALESCE(transfer_number,'') || %s WHERE id=%s""",
+                (amount_int, amount_int, f' | credited_full={amount_int}', int(tx_id)))
         conn.commit()
-        return {
-            'ok': True,
-            'withdraw_amount': amount_int,
-            'active_bonus_before': active_bonus,
-            'bonus_deducted': consumed_bonus,
-            'active_bonus_after': remaining_bonus,
-            'cash_credited': cash_to_credit,
-            'old_balance': old_balance,
-            'new_balance': new_balance,
-            'new_game_balance': int(updated_user[1] or 0),
-            'game_bonus_amount': int(updated_user[2] or 0),
-        }
+        return {'ok': True, 'withdraw_amount': amount_int, 'active_bonus_before': active_bonus,
+                'bonus_deducted': 0, 'active_bonus_after': active_bonus,
+                'cash_credited': amount_int, 'old_balance': int(row[0] or 0),
+                'new_balance': int(updated[0] or 0), 'new_game_balance': int(updated[1] or 0),
+                'game_bonus_amount': int(updated[2] or 0)}
     except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"settle_game_withdraw_with_active_bonus error: {e}")
+        if conn: conn.rollback()
+        logger.error(f"settle_game_with_active_bonus error: {e}")
         return {'ok': False, 'reason': 'error', 'message': str(e)}
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            DatabaseManager.put_connection(conn)
+        if cursor: cursor.close()
+        if conn: DatabaseManager.put_connection(conn)
 
 
 def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, reviewed_by=None, new_vip_tier=None, public_bonus_amount=None, first_deposit_bonus=False):
@@ -1126,8 +1030,7 @@ def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, rev
     1) قفل سجل المعاملة والتأكد أنه لا يزال pending (منع القبول المزدوج).
     2) قفل صف المستخدم.
     3) إضافة الإيداع النقدي إلى bot_balance (قابل للسحب)،
-       وإضافة البونص إلى bonus_balance (رصيد مكافآت مقيّد، لا يُسحب نقداً).
-       🎯 هذا يمنع استخراج البونص نقداً ويُجبره على المرور عبر اللعبة (حافة البيت).
+       وإضافة البونص معه إلى bot_balance كرصد نقدي طبيعي قابل للسحب.
     4) تعليم المعاملة approved.
 
     تعيد dict: {'ok': True, 'new_balance': int, 'new_bonus_balance': int,
@@ -1169,18 +1072,15 @@ def approve_deposit_atomic(telegram_id, deposit_amount, bonus_amount, tx_id, rev
             if cursor.fetchone():
                 bonus_added = max(0, bonus_added - int(public_bonus_amount or 0))
 
-        # 3) إضافة ذرّية: الإيداع النقدي → bot_balance ، والبونص → bonus_balance (مقيّد)
-        # ونضيف deposit_added إلى bonus_base_balance فقط إذا وُجد بونص، ليُصرف البونص نسبياً عند شحن اللعبة.
-        bonus_base_added = deposit_added if bonus_added > 0 else 0
+        # 3) الإيداع والبونص يصبحان رصيداً نقدياً واحداً قابلاً للسحب.
+        bonus_base_added = 0
         cursor.execute(
             """UPDATE users
                SET bot_balance = COALESCE(bot_balance, 0) + %s,
-                   bonus_balance = COALESCE(bonus_balance, 0) + %s,
-                   bonus_base_balance = COALESCE(bonus_base_balance, 0) + %s,
                    vip_tier = COALESCE(%s, vip_tier)
                WHERE telegram_id = %s
                RETURNING bot_balance, bonus_balance""",
-            (deposit_added, bonus_added, bonus_base_added, new_vip_tier, tid)
+            (deposit_added + bonus_added, new_vip_tier, tid)
         )
         new_row = cursor.fetchone()
         new_balance = int(new_row[0]) if new_row else 0

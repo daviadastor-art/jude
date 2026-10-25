@@ -867,15 +867,15 @@ function renderBalance(d){
     bonusHtml = `
       <div class="divider"></div>
       <div class="game-balance">
-        <div class="g-label" style="color:var(--gold)">🧧 رصيد المكافآت (للّعب فقط)</div>
+        <div class="g-label" style="color:var(--gold)">🧧 رصيد مكافآت إضافي</div>
         <div class="g-value" style="color:var(--gold)">${fmt(bonusBal)} ل.س جديدة</div>
       </div>
-      <div class="private-balance-line" style="font-size:11px;color:var(--hint);margin-top:2px;text-align:left">≈ ${bonusNewStr} ل.س جديدة — يُرفق تلقائياً عند شحن اللعبة</div>
+      <div class="private-balance-line" style="font-size:11px;color:var(--hint);margin-top:2px;text-align:left">≈ ${bonusNewStr} ل.س جديدة — معلومات مكافأة إضافية</div>
     `;
   }
   if(activeGameBonus > 0){
     bonusHtml += `
-      <div class="private-balance-line" style="font-size:11px;color:var(--warn);margin-top:6px;text-align:left">🧧 بونص نشط داخل اللعبة: ${fmt(activeGameBonus)} ل.س — يُخصم أولاً عند السحب من اللعبة</div>
+      <div class="private-balance-line" style="font-size:11px;color:var(--warn);margin-top:6px;text-align:left">🧧 بونص نشط داخل اللعبة: ${fmt(activeGameBonus)} ل.س — قابل للسحب بالكامل</div>
     `;
   }
 

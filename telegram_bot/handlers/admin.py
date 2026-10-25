@@ -792,7 +792,7 @@ async def approve_dep_callback(callback: CallbackQuery):
 
     vip_upgrade_reward = int(vip_upgrade.get('reward') or 0) if vip_upgrade.get('upgraded') else 0
     bonus_amount = public_bonus_amount + vip_deposit_bonus + vip_upgrade_reward
-    # ملاحظة: الإيداع والبونص لم يعودا يُجمعان — الإيداع → bot_balance ، كل البونصات → bonus_balance
+    # الإيداع والبونص يُضافان معاً إلى bot_balance كرصد نقدي قابل للسحب.
 
     # 🔐 اعتماد ذري كامل (Update 4): قفل + إضافة على الرصيد الفعلي + تعليم المعاملة
     # في معاملة واحدة — يمنع 'الكتابة فوق' والقبول المزدوج.
@@ -827,7 +827,7 @@ async def approve_dep_callback(callback: CallbackQuery):
                     text=(
                         f"✨ <b>مبروك! تمت ترقيتك إلى {vip_upgrade.get('new_tier')}!</b>\n\n"
                         f"🔷 مكافأة الترقية: <code>{vip_upgrade_reward:,} ل.س</code>\n"
-                        f"(أُضيفت لرصيد المكافآت 🧧 للاستخدام في اللعبة)"
+                        f"(أُضيفت كرصد طبيعي قابل للسحب)"
                     ),
                     parse_mode="HTML"
                 )
@@ -861,12 +861,12 @@ async def approve_dep_callback(callback: CallbackQuery):
         bonus_user_line = (
             "\n" + "\n".join(user_bonus_parts) +
             f"\n🧧 <b>إجمالي البونص المضاف:</b> <code>{bonus_amount:,} SYP</code>" +
-            "\n🧧 <b>أُضيف إلى رصيد المكافآت</b> (للاستخدام في اللعبة)"
+            "\n🧧 <b>أُضيف مباشرة إلى رصيد البوت القابل للسحب</b>"
         )
         risk_flag = "🔻" if bonus_net_risk > bonus_recovered_by_commission else "🔸"
         bonus_log_line = (
             "\n" + "\n".join(log_bonus_parts) +
-            f"\n🧧 إجمالي البونص: <code>{bonus_amount:,} SYP</code> → رصيد المكافآت (مقيّد)" +
+            f"\n🧧 إجمالي البونص: <code>{bonus_amount:,} SYP</code> → رصيد البوت (قابل للسحب)" +
             f"\n{risk_flag} صافي مخاطرة البونص: <code>{bonus_net_risk:,} SYP</code> "
             f"(يُسترد من العمولة: <code>{bonus_recovered_by_commission:,}</code>)"
         )

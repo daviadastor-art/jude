@@ -36,6 +36,13 @@ class FakeConnection:
 
 
 class AtomicGameBalanceUpdateTests(unittest.TestCase):
+    def test_real_game_bonus_is_percentage_of_paid_amount(self):
+        with patch.object(repository, "get_bot_settings", return_value={
+            "game_bonus_enabled": True,
+            "game_bonus_apply_percent": 10,
+        }):
+            self.assertEqual(repository.calculate_game_bonus_for_deposit(200), 20)
+
     def test_game_deposit_updates_cached_balance_in_confirmation_transaction(self):
         cursor = FakeCursor([
             ("user-1", "pending", 20, 30, 40),
@@ -55,13 +62,13 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
         })
         user_update, params = cursor.executed[1]
         self.assertIn("game_balance = COALESCE(game_balance, 0) + %s", user_update)
-        self.assertEqual(params, (90, 500, "user-1"))
+        self.assertEqual(params, (500, "user-1"))
         self.assertTrue(connection.committed)
 
     def test_game_withdraw_updates_game_and_bot_balances_atomically(self):
         cursor = FakeCursor([
             (500, 200),
-            (600, 600, 0),
+            (800, 600, 200),
         ])
         connection = FakeConnection(cursor)
 
@@ -72,12 +79,12 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
             )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["new_balance"], 600)
+        self.assertEqual(result["new_balance"], 800)
         self.assertEqual(result["new_game_balance"], 600)
-        self.assertEqual(result["game_bonus_amount"], 0)
+        self.assertEqual(result["game_bonus_amount"], 200)
         user_update, params = cursor.executed[1]
         self.assertIn("GREATEST(COALESCE(game_balance, 0) - %s, 0)", user_update)
-        self.assertEqual(params, (100, 0, 300, "user-1"))
+        self.assertEqual(params, (300, 300, "user-1"))
         self.assertTrue(connection.committed)
 
 

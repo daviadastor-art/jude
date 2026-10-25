@@ -820,7 +820,7 @@ async def withdraw_from_player_game(
             await send_log_message(bot, log_text)
             return False
 
-        # 🔐 الخطوة 3: نجح الـ API → خصم بونص اللعبة النشط أولاً ثم إضافة الصافي لرصيد البوت
+        # 🔐 الخطوة 3: نجح الـ API → إضافة كامل المبلغ لرصيد البوت
         settlement = await asyncio.to_thread(repo.settle_game_withdraw_with_active_bonus, user_id, amount_syp, tx_id=tx_id)
         if not settlement.get('ok'):
             logger.error(f"⛔ settlement failed after iChancy withdraw: {settlement}")
@@ -833,8 +833,7 @@ async def withdraw_from_player_game(
             f"🧑‍💼 المستخدم: {username} ({user_id})\n"
             f"🕹️ حساب اللعبة: {player_id}\n"
             f"💹 المسحوب من اللعبة: {int(amount_nsp):,} NSP\n"
-            f"🧧 خصم بونص لعب نشط: {bonus_deducted:,} ل.س جديدة\n"
-            f"🔷 الصافي المضاف لرصيد البوت: {cash_credited:,} ل.س جديدة\n"
+            f"🔷 المبلغ الكامل المضاف لرصيد البوت: {cash_credited:,} ل.س جديدة\n"
             f"🔹 الحالة: مكتمل\n"
             f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -2926,9 +2925,7 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
 
     # المبلغ داخل البوت جديد؛ Ichancy يستقبل القديم.
     amount_nsp = new_to_old(amount_syp)
-    bonus_available = int(user.get('bonus_balance') or 0)
-    bonus_base_balance = int(user.get('bonus_base_balance') or 0)
-    bonus_to_apply = await asyncio.to_thread(repo.calculate_game_bonus_for_deposit, amount_syp, bonus_available, bonus_base_balance)
+    bonus_to_apply = await asyncio.to_thread(repo.calculate_game_bonus_for_deposit, amount_syp)
     cashback_pending = int(user.get('cashback_pending_balance') or 0)
     checkin_pending = int(user.get('checkin_pending_balance') or 0)
     total_new = amount_syp + bonus_to_apply + cashback_pending + checkin_pending
@@ -2945,17 +2942,9 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
 
     bonus_line = ""
     if bonus_to_apply > 0:
-        bonus_line = f"🧧 بونص اللعب المرفق: <code>{format_old(new_to_old(bonus_to_apply))} ل.س قديمة</code>\n"
-    elif bonus_available > 0:
-        settings = await asyncio.to_thread(repo.get_bot_settings)
-        if not settings.get('game_bonus_enabled', True) or float(settings.get('game_bonus_apply_percent') or 0) <= 0:
-            bonus_line = "🧧 لديك بونص متاح، لكن إرفاق بونص اللعب متوقف حالياً من الإدارة.\n"
-        elif bonus_base_balance <= 0:
-            bonus_line = "🧧 لديك بونص متاح، لكنه غير مرتبط بإيداع نقدي حالياً؛ سيتم استخدام نسبة الإرفاق الاحتياطية عند توفرها.\n"
-        else:
-            bonus_line = "🧧 لديك بونص متاح، لكن لم تنطبق شروط إرفاقه على هذا الشحن.\n"
+        bonus_line = f"🧧 بونص الشحن: <code>{format_old(new_to_old(bonus_to_apply))} ل.س قديمة</code> — رصيد طبيعي كامل\n"
     else:
-        bonus_line = "🧧 لا يوجد بونص لعب متاح حالياً لهذا الشحن.\n"
+        bonus_line = "🧧 لا يوجد بونص شحن مفعّل حالياً.\n"
 
     confirm_text = (
         f"🗒️ <b>تأكيد شحن حساب اللعبة</b>\n\n"
@@ -2964,8 +2953,8 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
         f"🕹️ الإجمالي الذي سيصل للعبة: <code>{format_old(new_to_old(total_new))} ل.س قديمة</code>\n"
         f"📈 التحويل: 1 ل.س جديدة = 100 ل.س قديمة\n"
         f"🔷 رصيدك النقدي بعد العملية: <code>{int(safe_balance(user)) - amount_syp:,} ل.س جديدة</code>\n"
-        f"🧧 رصيد البونص بعد العملية: <code>{max(0, bonus_available - bonus_to_apply):,} ل.س جديدة</code>\n\n"
-        f"🚧 <b>بونص اللعب يُستخدم داخل اللعبة، وعند السحب يُخصم البونص النشط أولاً.</b>"
+        f"💰 المبلغ المدفوع من رصيد البوت: <code>{amount_syp:,} ل.س جديدة</code>\n\n"
+        f"✅ <b>البونص يصل كرصد طبيعي كامل ويمكن سحبه من اللعبة دون خصم.</b>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [premium_button(text="✔️ تأكيد الشحن", callback_data="confirm_game_deposit")],
@@ -3089,11 +3078,8 @@ async def withdraw_game_acc_callback(callback: CallbackQuery, state: FSMContext)
         await safe_answer_callback(callback)
         return
 
-    active_bonus = int(user.get('game_bonus_amount') or 0)
-    net_if_full = max(0, int(game_balance) - active_bonus)
+    net_if_full = int(game_balance)
     bonus_info_line = ""
-    if active_bonus > 0:
-        bonus_info_line = f"🧧 <b>بونص لعب نشط:</b> <code>{active_bonus:,} ل.س جديدة</code> <i>(يُخصم أولاً عند السحب)</i>\n"
 
     text = (
         f"📬 <b>سحب من حساب اللعبة (iChancy)</b>\n\n"
@@ -3136,9 +3122,8 @@ async def process_game_withdraw_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("⛔ يجب أن يكون المبلغ بالليرة القديمة من مضاعفات 100 (مثال: 25000).")
         return
-    active_bonus = int(user.get('game_bonus_amount') or 0)
-    bonus_deducted = min(active_bonus, amount_syp)
-    cash_to_credit = max(0, amount_syp - bonus_deducted)
+    bonus_deducted = 0
+    cash_to_credit = amount_syp
     await state.update_data(
         game_withdraw_nsp=amount_nsp,
         game_withdraw_syp=cash_to_credit,
@@ -3148,17 +3133,15 @@ async def process_game_withdraw_amount(message: Message, state: FSMContext):
     )
 
     bonus_line = ""
-    if bonus_deducted > 0:
-        bonus_line = f"🧧 خصم بونص لعب نشط: <code>{bonus_deducted:,} ل.س جديدة</code>\n"
 
     confirm_text = (
         f"🗒️ <b>تأكيد السحب من حساب اللعبة</b>\n\n"
         f"💹 سيتم سحب: <code>{amount_nsp:,} NSP</code> من حساب اللعبة\n"
         f"{bonus_line}"
-        f"🔷 الصافي الذي سيضاف لرصيد البوت: <code>{format_new(cash_to_credit)} ل.س جديدة</code>\n"
+        f"🔷 المبلغ الكامل الذي سيضاف لرصيد البوت: <code>{format_new(cash_to_credit)} ل.س جديدة</code>\n"
         f"📈 التحويل: 100 ل.س قديمة = 1 ل.س جديدة\n"
         f"🔷 رصيد البوت بعد العملية: <code>{format_new(int(safe_balance(user)) + cash_to_credit)} ل.س جديدة</code>\n\n"
-        f"🚧 <b>بونص اللعب النشط غير قابل للسحب نقداً ويُخصم أولاً.</b>"
+        f"✅ <b>كل الرصيد داخل اللعبة طبيعي وقابل للسحب بالكامل.</b>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [premium_button(text="✔️ تأكيد السحب", callback_data="confirm_game_withdraw")],
@@ -3206,7 +3189,7 @@ async def confirm_game_withdraw_callback(callback: CallbackQuery, state: FSMCont
         new_game = int(result.get('new_game_balance') or 0)
         cash_credited = int(result.get('cash_credited') or 0) if isinstance(result, dict) else int(data.get('game_withdraw_syp') or 0)
         bonus_deducted = int(result.get('bonus_deducted') or 0) if isinstance(result, dict) else int(data.get('game_withdraw_bonus_deducted') or 0)
-        bonus_line = f"🧧 خصم بونص لعب نشط: <code>{bonus_deducted:,} ل.س جديدة</code>\n" if bonus_deducted > 0 else ""
+        bonus_line = ""
         await safe_edit_text(
             callback.message,
             f"✔️ <b>تم سحب رصيد اللعبة بنجاح!</b>\n\n"
