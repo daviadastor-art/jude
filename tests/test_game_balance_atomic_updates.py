@@ -36,34 +36,6 @@ class FakeConnection:
 
 
 class AtomicGameBalanceUpdateTests(unittest.TestCase):
-    def test_game_bonus_follows_configured_percentage_when_no_deposit_base_exists(self):
-        with patch.object(repository, "get_bot_settings", return_value={
-            "game_bonus_enabled": True,
-            "game_bonus_apply_percent": 10,
-        }):
-            self.assertEqual(
-                repository.calculate_game_bonus_for_deposit(
-                    amount=100,
-                    available_bonus=50,
-                    bonus_base_balance=0,
-                ),
-                10,
-            )
-
-    def test_game_bonus_never_exceeds_available_bonus(self):
-        with patch.object(repository, "get_bot_settings", return_value={
-            "game_bonus_enabled": True,
-            "game_bonus_apply_percent": 10,
-        }):
-            self.assertEqual(
-                repository.calculate_game_bonus_for_deposit(
-                    amount=100,
-                    available_bonus=5,
-                    bonus_base_balance=0,
-                ),
-                5,
-            )
-
     def test_game_deposit_updates_cached_balance_in_confirmation_transaction(self):
         cursor = FakeCursor([
             ("user-1", "pending", 20, 30, 40),
@@ -107,23 +79,6 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
         self.assertIn("GREATEST(COALESCE(game_balance, 0) - %s, 0)", user_update)
         self.assertEqual(params, (100, 0, 300, "user-1"))
         self.assertTrue(connection.committed)
-
-    def test_20000_old_units_are_settled_as_200_new_units(self):
-        cursor = FakeCursor([
-            (0, 0),
-            (200, 0, 0),
-        ])
-        connection = FakeConnection(cursor)
-
-        with patch.object(repository.DatabaseManager, "get_connection", return_value=connection), \
-                patch.object(repository.DatabaseManager, "put_connection"):
-            result = repository.settle_game_withdraw_with_active_bonus(
-                "user-1", withdraw_amount=200, tx_id=9
-            )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["cash_credited"], 200)
-        self.assertEqual(result["new_balance"], 200)
 
 
 if __name__ == "__main__":

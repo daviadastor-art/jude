@@ -745,14 +745,14 @@ def calculate_game_bonus_for_deposit(amount, available_bonus=None, bonus_base_ba
     if base_int > 0:
         bonus = int(amount_int * available_bonus_int / base_int)
     else:
-        # للمكافآت غير المرتبطة بإيداع نقدي (كاش باك/هدايا/حضور)، تكون
-        # النسبة المضبوطة هي الحد الأقصى الفعلي للإرفاق. لا يجوز أن تتحول
-        # مكافأة محفوظة إلى إرفاق 100% من الشحن لمجرد أن رصيد المكافأة أكبر.
-        pct = float(settings.get('game_bonus_apply_percent', 10) or 0)
+        # 🔧 إصلاح جوهري: عندما يكون رصيد قاعدة البونص (base_int) صفراً (مثل مكافآت الكاش باك، الهدايا، والحضور)،
+        # يتم إرفاق البونص المتاح (available_bonus_int) مع الإيداع النقدي (حتى 100% من قيمة الإيداع النقدي)
+        # لضمان وصول رصيد المكافآت إلى حساب اللعبة الفعلي وعدم تجميده بنسبة 10% فقط.
+        pct = float(settings.get('game_bonus_apply_percent', 100))
         if pct <= 0:
-            return 0
+            pct = 100.0
         pct_bonus = int(amount_int * (pct / 100.0))
-        bonus = min(available_bonus_int, pct_bonus)
+        bonus = max(pct_bonus, min(available_bonus_int, amount_int))
     return max(0, min(available_bonus_int, bonus))
 
 
