@@ -1839,7 +1839,7 @@ def get_bot_settings():
     return settings_dict
 
 
-def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=None, withdraw_commission=None, agent_balance=None, referrals_enabled=None, game_min_deposit_syp=None, agent_revenue_percent=None, min_deposit_syp=None, min_deposit_usd=None, min_withdraw_syp=None, min_withdraw_usd=None, syp_version=None, bonus_rollover_multiplier=None, turnover_field_name=None, game_bonus_enabled=None, game_bonus_apply_percent=None, syriatel_auto_mode=None, syriatel_auto_channel_id=None, shamcash_auto_mode=None, shamcash_auto_channel_id=None, agent_balance_alert_threshold=None):
+def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=None, withdraw_commission=None, agent_balance=None, referrals_enabled=None, game_min_deposit_syp=None, agent_revenue_percent=None, min_deposit_syp=None, min_deposit_usd=None, min_withdraw_syp=None, min_withdraw_usd=None, syp_version=None, bonus_rollover_multiplier=None, turnover_field_name=None, game_bonus_enabled=None, game_bonus_apply_percent=None, syriatel_auto_mode=None, syriatel_auto_channel_id=None, shamcash_auto_mode=None, shamcash_auto_channel_id=None, agent_balance_alert_threshold=None, backup_schedule_enabled=None, backup_schedule_interval_days=None, backup_next_run_at=None, backup_last_run_at=None):
     settings_dict = get_bot_settings()
     if not settings_dict:
         DatabaseManager.execute_query("INSERT INTO bot_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;")
@@ -1867,10 +1867,14 @@ def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=Non
     new_shamcash_auto_mode = shamcash_auto_mode if shamcash_auto_mode is not None else settings_dict.get('shamcash_auto_mode', 'off')
     new_shamcash_auto_channel_id = shamcash_auto_channel_id if shamcash_auto_channel_id is not None else settings_dict.get('shamcash_auto_channel_id', '')
     new_alert_thresh = agent_balance_alert_threshold if agent_balance_alert_threshold is not None else settings_dict.get('agent_balance_alert_threshold', 100000)
+    new_backup_enabled = backup_schedule_enabled if backup_schedule_enabled is not None else settings_dict.get('backup_schedule_enabled', False)
+    new_backup_interval = backup_schedule_interval_days if backup_schedule_interval_days is not None else settings_dict.get('backup_schedule_interval_days', 1)
+    new_backup_next_run = backup_next_run_at if backup_next_run_at is not None else settings_dict.get('backup_next_run_at')
+    new_backup_last_run = backup_last_run_at if backup_last_run_at is not None else settings_dict.get('backup_last_run_at')
 
     query = """
     UPDATE bot_settings
-    SET exchange_rate = %s, usd_buy_rate = %s, usd_sell_rate = %s, withdraw_commission = %s, agent_balance = %s, referrals_enabled = %s, game_min_deposit_syp = %s, agent_revenue_percent = %s, min_deposit_syp = %s, min_deposit_usd = %s, min_withdraw_syp = %s, min_withdraw_usd = %s, syp_version = %s, bonus_rollover_multiplier = %s, turnover_field_name = %s, game_bonus_enabled = %s, game_bonus_apply_percent = %s, syriatel_auto_mode = %s, syriatel_auto_channel_id = %s, shamcash_auto_mode = %s, shamcash_auto_channel_id = %s, agent_balance_alert_threshold = %s
+    SET exchange_rate = %s, usd_buy_rate = %s, usd_sell_rate = %s, withdraw_commission = %s, agent_balance = %s, referrals_enabled = %s, game_min_deposit_syp = %s, agent_revenue_percent = %s, min_deposit_syp = %s, min_deposit_usd = %s, min_withdraw_syp = %s, min_withdraw_usd = %s, syp_version = %s, bonus_rollover_multiplier = %s, turnover_field_name = %s, game_bonus_enabled = %s, game_bonus_apply_percent = %s, syriatel_auto_mode = %s, syriatel_auto_channel_id = %s, shamcash_auto_mode = %s, shamcash_auto_channel_id = %s, agent_balance_alert_threshold = %s, backup_schedule_enabled = %s, backup_schedule_interval_days = %s, backup_next_run_at = %s, backup_last_run_at = %s
     WHERE id = 1
     """
     DatabaseManager.execute_query(
@@ -1897,7 +1901,11 @@ def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=Non
             str(new_syriatel_auto_channel_id or ''),
             str(new_shamcash_auto_mode or 'off'),
             str(new_shamcash_auto_channel_id or ''),
-            int(new_alert_thresh)
+            int(new_alert_thresh),
+            bool(new_backup_enabled),
+            max(1, int(new_backup_interval)),
+            new_backup_next_run,
+            new_backup_last_run
         )
     )
     if hasattr(DatabaseManager, 'invalidate_settings_cache'):

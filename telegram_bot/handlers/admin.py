@@ -5,7 +5,7 @@ import time
 import random
 import string
 import html
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command, Filter
@@ -17,6 +17,7 @@ import database.repository as repo
 from ichancy_api.client import ichancy_api_client
 from database.connection import DatabaseManager
 from telegram_bot.middlewares.terms_check import invalidate_user_status_cache
+from telegram_bot.backup import run_backup_and_send
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ class AdminStates(StatesGroup):
     entering_lb_prize_2 = State()
     entering_lb_prize_3 = State()
     entering_lb_min_turnover = State()
+    entering_backup_interval = State()
 
 
 
@@ -200,6 +202,7 @@ def get_admin_keyboard():
         [premium_button(text="🕹️ رصيد محفظة الوكيل الفعلي", callback_data="adm_agent_bal")],
         [premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses")],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
+        [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
         [
             premium_button(text="🎟️ إنشاء كود هدية", callback_data="adm_create_bot_gift"),
             premium_button(text="🧧 البونصات والعروض", callback_data="adm_bonus_menu")
@@ -225,6 +228,7 @@ def get_admin_dashboard_keyboard(refresh_callback="caesar_control_panel"):
             premium_button(text="📈 تحديث السيولة", callback_data="adm_sync_liquidity")
         ],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
+        [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
         [
             premium_button(text="🧪 فحص النبض والمحاكاة", callback_data="adm_system_probe"),
             premium_button(text="🔁 تصفير حسابي الاختباري", callback_data="adm_reset_my_test_balance")
@@ -1536,6 +1540,114 @@ async def adm_agent_bal_callback(callback: CallbackQuery):
             parse_mode="HTML"
         )
     await safe_answer_callback(callback)
+
+
+# ================================================================
+# 🗄️ النسخ الاحتياطي الكامل لقاعدة البيانات
+# ================================================================
+
+def _backup_menu_keyboard(enabled=False):
+    rows = [
+        [premium_button(text="📦 نسخ احتياطي فوري", callback_data="adm_backup_now")],
+        [premium_button(text="🗓️ جدولة النسخ الاحتياطي", callback_data="adm_backup_schedule")],
+    ]
+    if enabled:
+        rows.append([premium_button(text="⛔ إيقاف الجدولة", callback_data="adm_backup_schedule_disable")])
+    rows.append([premium_button(text="↩️ لوحة التحكم", callback_data="caesar_control_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "adm_backup_menu")
+async def adm_backup_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    await state.clear()
+    backup_settings = await asyncio.to_thread(repo.get_bot_settings) or {}
+    enabled = bool(backup_settings.get('backup_schedule_enabled'))
+    interval = int(backup_settings.get('backup_schedule_interval_days') or 1)
+    next_run = backup_settings.get('backup_next_run_at')
+    status = f"✅ مفعّلة كل <code>{interval}</code> يوم" if enabled else "⛔ غير مفعّلة"
+    next_text = f"\n⏰ النسخة القادمة: <code>{next_run}</code>" if enabled and next_run else ""
+    text = (
+        "🗄️ <b>النسخ الاحتياطي لقاعدة البيانات</b>\n\n"
+        "يتم إنشاء ملف مضغوط يشمل جميع الجداول والبيانات وإرساله إلى قناة النسخ المحددة.\n\n"
+        f"📅 الجدولة الحالية: {status}{next_text}\n\n"
+        "اختر العملية المطلوبة:"
+    )
+    await safe_edit_text(callback.message, text, reply_markup=_backup_menu_keyboard(enabled), parse_mode="HTML")
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "adm_backup_now")
+async def adm_backup_now_callback(callback: CallbackQuery):
+    if not await ensure_admin_callback(callback):
+        return
+    await safe_answer_callback(callback, "⏳ بدأ تجهيز النسخة...")
+    progress = await callback.message.answer("⏳ جاري بدء النسخ الاحتياطي...", parse_mode="HTML")
+    await run_backup_and_send(callback.bot, progress_message=progress, trigger="نسخ فوري من الأدمن")
+
+
+@router.callback_query(F.data == "adm_backup_schedule")
+async def adm_backup_schedule_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    await safe_edit_text(
+        callback.message,
+        "🗓️ <b>جدولة النسخ الاحتياطي</b>\n\nأرسل عدد الأيام بين كل نسخة وأخرى (من 1 إلى 365):\n\nمثال: <code>1</code> = نسخة تلقائية كل يوم.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[premium_button(text="↩️ إلغاء", callback_data="adm_backup_menu")]]),
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.entering_backup_interval)
+    await safe_answer_callback(callback)
+
+
+@router.message(AdminStates.entering_backup_interval)
+async def process_backup_interval(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state):
+        return
+    try:
+        days = int((message.text or "").strip())
+    except ValueError:
+        await message.answer("⛔ أرسل رقماً صحيحاً بين 1 و365.")
+        return
+    if not 1 <= days <= 365:
+        await message.answer("⛔ المدة يجب أن تكون بين يوم واحد و365 يوماً.")
+        return
+    await state.update_data(backup_interval_days=days)
+    await message.answer(
+        f"✅ تم تحديد المدة: <code>{days}</code> يوم. اضغط حفظ لتفعيل الجدولة.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [premium_button(text="💾 حفظ وتفعيل", callback_data="adm_backup_schedule_save")],
+            [premium_button(text="↩️ إلغاء", callback_data="adm_backup_menu")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "adm_backup_schedule_save")
+async def adm_backup_schedule_save_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    data = await state.get_data()
+    days = int(data.get('backup_interval_days') or 0)
+    if not 1 <= days <= 365:
+        await safe_answer_callback(callback, "⛔ أعد إدخال عدد الأيام.", show_alert=True)
+        return
+    next_run = datetime.now(timezone.utc) + timedelta(days=days)
+    await asyncio.to_thread(repo.update_bot_settings, backup_schedule_enabled=True, backup_schedule_interval_days=days, backup_next_run_at=next_run, backup_last_run_at=None)
+    await state.clear()
+    await safe_answer_callback(callback, "تم حفظ الجدولة ✔️")
+    await adm_backup_menu_callback(callback, state)
+
+
+@router.callback_query(F.data == "adm_backup_schedule_disable")
+async def adm_backup_schedule_disable_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback):
+        return
+    await asyncio.to_thread(repo.update_bot_settings, backup_schedule_enabled=False)
+    await state.clear()
+    await safe_answer_callback(callback, "تم إيقاف الجدولة")
+    await adm_backup_menu_callback(callback, state)
 
 
 # ================================================================

@@ -17,6 +17,9 @@ WITHDRAWAL_CHANNEL_ID = os.getenv('WITHDRAWAL_CHANNEL_ID')
 # 🆕 جديد - قناة السجلات
 LOG_CHANNEL_ID = os.getenv('LOG_CHANNEL_ID')
 
+# قناة النسخ الاحتياطي الكاملة لقاعدة البيانات.
+BACKUP_CHANNEL_ID = os.getenv('BACKUP_CHANNEL_ID', '-1004487457598')
+
 # 🆕 قناة المسابقات والتوقعات
 CONTEST_CHANNEL_ID = os.getenv('CONTEST_CHANNEL_ID')
 

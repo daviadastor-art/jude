@@ -8,7 +8,7 @@ import logging
 import asyncio
 import urllib.parse
 import html
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from contextlib import suppress
 from aiogram import Bot, Dispatcher
@@ -47,6 +47,7 @@ from telegram_bot.middlewares.terms_check import TermsCheckMiddleware, invalidat
 from telegram_bot.middlewares.performance import SlowUpdateMiddleware
 from telegram_bot.handlers import start, menu, admin
 from telegram_bot import leaderboard as lb_engine
+from telegram_bot.backup import run_backup_and_send
 from ichancy_api.client import ichancy_api_client
 import database.repository as repo
 from neon_metrics import get_neon_metrics
@@ -64,6 +65,7 @@ ensure_webhook_task = None
 daily_report_task = None
 leaderboard_task = None
 button_link_cache_task = None
+backup_task = None
 routers_registered = False
 last_ichancy_auth_warning_sent = None
 SERVER_START_TS = time.time()
@@ -433,6 +435,34 @@ async def daily_report_scheduler(bot: Bot):
             await asyncio.sleep(60)  # إعادة المحاولة بعد دقيقة
 
 
+async def database_backup_scheduler(bot: Bot):
+    """ينفذ النسخ الدوري المحفوظ في bot_settings دون الحاجة إلى Mini App."""
+    logger.info("🗄️ Database backup scheduler initialized.")
+    while True:
+        try:
+            current = datetime.now(timezone.utc)
+            backup_settings = await asyncio.to_thread(repo.get_bot_settings) or {}
+            enabled = bool(backup_settings.get('backup_schedule_enabled'))
+            next_run = backup_settings.get('backup_next_run_at')
+            if enabled and next_run:
+                if next_run.tzinfo is None:
+                    next_run = next_run.replace(tzinfo=timezone.utc)
+                if next_run <= current:
+                    interval_days = max(1, int(backup_settings.get('backup_schedule_interval_days') or 1))
+                    success = await run_backup_and_send(bot, trigger=f"جدولة تلقائية كل {interval_days} يوم")
+                    now_after = datetime.now(timezone.utc)
+                    # حتى عند فشل الإرسال لا نكرر العملية كل دقيقة؛ تتم المحاولة في الدورة التالية.
+                    retry_or_next = now_after + (timedelta(days=interval_days) if success else timedelta(hours=1))
+                    await asyncio.to_thread(repo.update_bot_settings, backup_last_run_at=now_after, backup_next_run_at=retry_or_next)
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.info("⛔ Database backup scheduler cancelled.")
+            raise
+        except Exception as exc:
+            logger.error(f"⛔ Database backup scheduler error: {exc}", exc_info=True)
+            await asyncio.sleep(60)
+
+
 # ================================================================
 # 🌟 (Update 18) لوحة المتصدرين الأسبوعية — تحديث الإحصائيات والتسوية
 # ================================================================
@@ -743,7 +773,7 @@ async def button_link_cache_refresh_task():
 
 async def on_startup(dispatcher: Dispatcher, bot: Bot):
     """تهيئة البوت عند بدء التشغيل."""
-    global watchdog_task, ensure_webhook_task, daily_report_task, leaderboard_task, button_link_cache_task, routers_registered
+    global watchdog_task, ensure_webhook_task, daily_report_task, leaderboard_task, button_link_cache_task, backup_task, routers_registered
 
     logger.info("🛫 Jude Robert is starting...")
 
@@ -799,12 +829,16 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
     if button_link_cache_task is None or button_link_cache_task.done():
         button_link_cache_task = asyncio.create_task(button_link_cache_refresh_task())
 
+    if backup_task is None or backup_task.done():
+        backup_task = asyncio.create_task(database_backup_scheduler(bot))
+        logger.info("🗄️ Database backup scheduler started.")
+
 
 async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
     """تنظيف الموارد عند إيقاف البوت."""
     logger.info("⛔ Shutting down...")
 
-    for task in [watchdog_task, ensure_webhook_task, daily_report_task, leaderboard_task, button_link_cache_task]:
+    for task in [watchdog_task, ensure_webhook_task, daily_report_task, leaderboard_task, button_link_cache_task, backup_task]:
         if task and not task.done():
             task.cancel()
             with suppress(asyncio.CancelledError):

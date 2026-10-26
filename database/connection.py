@@ -655,6 +655,11 @@ class DatabaseManager:
         alter_settings_deposits_enabled = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS deposits_enabled BOOLEAN DEFAULT TRUE;"
         alter_settings_withdrawals_enabled = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS withdrawals_enabled BOOLEAN DEFAULT TRUE;"
         alter_settings_game_transfers_enabled = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS game_transfers_enabled BOOLEAN DEFAULT TRUE;"
+        # إعدادات النسخ الاحتياطي الدوري — محفوظة في قاعدة البيانات ليستمر الجدول بعد إعادة التشغيل.
+        alter_settings_backup_enabled = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS backup_schedule_enabled BOOLEAN DEFAULT FALSE;"
+        alter_settings_backup_interval = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS backup_schedule_interval_days INTEGER DEFAULT 1;"
+        alter_settings_backup_next_run = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS backup_next_run_at TIMESTAMP WITH TIME ZONE;"
+        alter_settings_backup_last_run = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS backup_last_run_at TIMESTAMP WITH TIME ZONE;"
 
         # 🆕 (Update 14) رصيد المكافآت للمستخدم (غير قابل للسحب)
         alter_users_banned = "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;"
@@ -845,6 +850,10 @@ class DatabaseManager:
             alter_settings_deposits_enabled,
             alter_settings_withdrawals_enabled,
             alter_settings_game_transfers_enabled,
+            alter_settings_backup_enabled,
+            alter_settings_backup_interval,
+            alter_settings_backup_next_run,
+            alter_settings_backup_last_run,
             alter_users_banned,
             alter_users_bonus_balance,
             alter_users_game_bonus_amount,
