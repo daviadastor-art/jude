@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from contextlib import suppress
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import settings
@@ -25,6 +25,7 @@ from telegram_bot.keyboards.inline import (
     get_contest_submit_keyboard,
     get_prediction_card_options_keyboard,
     get_prediction_cards_list_keyboard,
+    get_wheel_url,
 )
 
 router = Router()
@@ -957,7 +958,8 @@ async def auto_approve_cash_deposit(bot, tx_id, external_ref=None, provider_labe
         reviewed_by=reviewer,
         new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None,
         public_bonus_amount=public_bonus_amount,
-        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only'))
+        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only')),
+        wheel_bonus_percent=bonus_info.get('wheel_bonus_percent')
     )
     if not result.get('ok') or result.get('already_approved'):
         return {'ok': False, 'reason': result.get('reason') or 'approve_failed'}
@@ -1260,6 +1262,59 @@ async def process_ichancy_password(message: Message, state: FSMContext):
         )
 
     await state.clear()
+
+
+# ================================================================
+# 🎡 عجلة الحظ داخل البوت
+# ================================================================
+
+
+def _wheel_bot_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text="🎡 فتح عجلة الحظ", web_app=WebAppInfo(url=get_wheel_url()))],
+        [premium_button(text="🛒 شراء لفة — 250 ل.س جديدة", callback_data="wheel_buy_spin")],
+        [premium_button(text="↩️ القائمة الرئيسية", callback_data="back_to_main_menu")],
+    ])
+
+
+def _wheel_bot_text(state):
+    return (
+        "🎡 <b>عجلة الحظ</b>\n\n"
+        f"🎟️ <b>لفاتك الحالية:</b> <code>{int(state.get('current_spins', 0))}</code>\n"
+        f"🆓 لفات مجانية: <code>{int(state.get('free_spins', 0))}</code>\n"
+        f"🛒 لفات مشتراة: <code>{int(state.get('paid_spins', 0))}</code>\n"
+        f"📊 عدد اللفات المستخدمة: <code>{int(state.get('used_spins', 0))}</code>\n"
+        f"📉 خسارتك اليوم: <code>{int(state.get('daily_loss', 0)):,}</code> ل.س جديدة\n\n"
+        "إذا تجاوزت خسارتك اليومية <b>500 ل.س جديدة</b> تحصل على لفة مجانية واحدة فقط في اليوم.\n"
+        "سعر اللفة الإضافية: <b>250 ل.س جديدة</b>."
+    )
+
+
+@router.callback_query(F.data == "wheel_menu")
+async def wheel_menu_callback(callback: CallbackQuery):
+    state = await asyncio.to_thread(repo.get_wheel_user_state, str(callback.from_user.id), False)
+    if not state:
+        await safe_answer_callback(callback, "تعذّر تحميل بيانات عجلة الحظ.", show_alert=True)
+        return
+    await callback.message.edit_text(_wheel_bot_text(state), reply_markup=_wheel_bot_keyboard(), parse_mode="HTML")
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "wheel_buy_spin")
+async def wheel_buy_spin_callback(callback: CallbackQuery):
+    await safe_answer_callback(callback, "⏳ جارٍ شراء اللفة...")
+    result = await asyncio.to_thread(repo.buy_wheel_spin_atomic, str(callback.from_user.id))
+    if not result.get('ok'):
+        message = "رصيدك غير كافٍ لشراء اللفة (السعر 250 ل.س جديدة)." if result.get('reason') == 'insufficient_balance' else "تعذّر شراء اللفة الآن."
+        await callback.message.edit_text(f"⛔ {message}", reply_markup=_wheel_bot_keyboard(), parse_mode="HTML")
+        return
+    state = await asyncio.to_thread(repo.get_wheel_user_state, str(callback.from_user.id), False)
+    await callback.message.edit_text(
+        "✅ <b>تم شراء لفة بنجاح</b>\n\n"
+        f"💳 تم خصم: <code>{result['price']:,} ل.س جديدة</code>\n"
+        f"🎟️ لفاتك الحالية: <code>{state.get('current_spins', 0)}</code>",
+        reply_markup=_wheel_bot_keyboard(), parse_mode="HTML"
+    )
 
 
 # ================================================================

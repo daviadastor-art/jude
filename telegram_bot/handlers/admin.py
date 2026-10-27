@@ -186,6 +186,11 @@ class AdminStates(StatesGroup):
     entering_lb_prize_3 = State()
     entering_lb_min_turnover = State()
     entering_backup_interval = State()
+    wheel_prize_value = State()
+    wheel_prize_weight = State()
+    wheel_prize_label = State()
+    wheel_gift_user_id = State()
+    wheel_gift_amount = State()
 
 
 
@@ -203,6 +208,7 @@ def get_admin_keyboard():
         [premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses")],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
+        [premium_button(text="🎡 عجلة الحظ", callback_data="adm_wheel_menu")],
         [
             premium_button(text="🎟️ إنشاء كود هدية", callback_data="adm_create_bot_gift"),
             premium_button(text="🧧 البونصات والعروض", callback_data="adm_bonus_menu")
@@ -229,6 +235,7 @@ def get_admin_dashboard_keyboard(refresh_callback="caesar_control_panel"):
         ],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
+        [premium_button(text="🎡 عجلة الحظ", callback_data="adm_wheel_menu")],
         [
             premium_button(text="🧪 فحص النبض والمحاكاة", callback_data="adm_system_probe"),
             premium_button(text="🔁 تصفير حسابي الاختباري", callback_data="adm_reset_my_test_balance")
@@ -807,7 +814,8 @@ async def approve_dep_callback(callback: CallbackQuery):
         reviewed_by=callback.from_user.id,
         new_vip_tier=int(vip_upgrade.get('new_tier_index')) if vip_upgrade.get('upgraded') else None,
         public_bonus_amount=public_bonus_amount,
-        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only'))
+        first_deposit_bonus=bool(bonus_rule and bonus_rule.get('first_deposit_only')),
+        wheel_bonus_percent=bonus_info.get('wheel_bonus_percent')
     )
     if not result.get('ok'):
         logger.error(f"approve_deposit_atomic failed for tx #{tx_id}: {result.get('reason')}")
@@ -1697,6 +1705,161 @@ async def adm_referrals_disable_callback(callback: CallbackQuery):
     await safe_answer_callback(callback, "تم إيقاف الإحالات مؤقتاً 🔻")
     await adm_referrals_toggle_callback(callback)
 
+
+
+# ================================================================
+# 🎡 إدارة عجلة الحظ من البوت
+# ================================================================
+
+WHEEL_PRIZE_TYPES = {
+    'cash': '💰 رصيد فوري', 'bonus_percent': '🧧 بونص على الشحن %',
+    'free_spin': '🎟️ لفات مجانية', 'retry': '🔁 إعادة محاولة',
+    'luck': '🍀 حظ أوفر %', 'nothing': '🙂 حظ أوفر بالمرة القادمة',
+}
+
+
+def wheel_admin_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text="➕ إضافة هدية جديدة", callback_data="adm_wheel_add")],
+        [premium_button(text="📋 الجوائز الحالية", callback_data="adm_wheel_prizes"), premium_button(text="📜 سجل النتائج", callback_data="adm_wheel_history")],
+        [premium_button(text="🎁 إهداء لفات لمستخدم", callback_data="adm_wheel_gift")],
+        [premium_button(text="↩️ لوحة التحكم", callback_data="caesar_control_panel")],
+    ])
+
+
+@router.callback_query(F.data == "adm_wheel_menu")
+async def adm_wheel_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback): return
+    await state.clear()
+    stats = await asyncio.to_thread(repo.get_wheel_stats)
+    await safe_edit_text(callback.message,
+        "🎡 <b>إدارة عجلة الحظ</b>\n\n"
+        f"📅 دورات اليوم: <code>{stats.get('today_spins', 0)}</code>\n"
+        f"🎁 جوائز اليوم: <code>{stats.get('today_rewards', 0):,}</code>\n"
+        f"📊 إجمالي الدورات: <code>{stats.get('total_spins', 0)}</code>\n\n"
+        "من هنا يمكنك إدارة الهدايا، مراجعة النتائج، وإهداء لفات مجانية لأي مستخدم.",
+        reply_markup=wheel_admin_keyboard(), parse_mode="HTML")
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "adm_wheel_add")
+async def adm_wheel_add_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback): return
+    rows = [[premium_button(text=label, callback_data=f"adm_wheel_type_{key}")] for key, label in WHEEL_PRIZE_TYPES.items()]
+    rows.append([premium_button(text="↩️ رجوع", callback_data="adm_wheel_menu")])
+    await safe_edit_text(callback.message, "➕ <b>اختر نوع الهدية</b>\n\nسيتم تحديد قيمة الهدية واحتمال ظهورها ثم حفظها فوراً.", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), parse_mode="HTML")
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("adm_wheel_type_"))
+async def adm_wheel_type_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback): return
+    prize_type = callback.data.replace("adm_wheel_type_", "")
+    if prize_type not in WHEEL_PRIZE_TYPES: return
+    await state.update_data(wheel_prize_type=prize_type)
+    hint = "أرسل القيمة: مبلغ بالليرة" if prize_type == 'cash' else "أرسل القيمة: نسبة مئوية" if prize_type in ('bonus_percent', 'luck') else "أرسل عدد اللفات (مثال: 1)" if prize_type in ('free_spin', 'retry') else "أرسل 0"
+    await safe_edit_text(callback.message, f"{WHEEL_PRIZE_TYPES[prize_type]}\n\n{hint}:", parse_mode="HTML")
+    await state.set_state(AdminStates.wheel_prize_value)
+    await safe_answer_callback(callback)
+
+
+@router.message(AdminStates.wheel_prize_value)
+async def process_wheel_prize_value(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state): return
+    try:
+        value = float((message.text or '').strip().replace(',', '.'))
+        if value < 0: raise ValueError
+    except ValueError:
+        await message.answer("⛔ أرسل قيمة رقمية صحيحة."); return
+    await state.update_data(wheel_prize_value=value)
+    await message.answer("📈 أرسل وزن/احتمال ظهور الهدية. مثال: <code>10</code>\nكلما زاد الوزن زادت فرصة الظهور.", parse_mode="HTML")
+    await state.set_state(AdminStates.wheel_prize_weight)
+
+
+@router.message(AdminStates.wheel_prize_weight)
+async def process_wheel_prize_weight(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state): return
+    try:
+        weight = float((message.text or '').strip().replace(',', '.'))
+        if weight <= 0: raise ValueError
+    except ValueError:
+        await message.answer("⛔ الوزن يجب أن يكون أكبر من صفر."); return
+    await state.update_data(wheel_prize_weight=weight)
+    await message.answer("🏷️ أرسل اسم الهدية كما سيظهر للمستخدم. مثال: <code>رصيد فوري 1000</code>", parse_mode="HTML")
+    await state.set_state(AdminStates.wheel_prize_label)
+
+
+@router.message(AdminStates.wheel_prize_label)
+async def process_wheel_prize_label(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state): return
+    data = await state.get_data(); label = (message.text or '').strip()[:180]
+    prize_id = await asyncio.to_thread(repo.create_wheel_prize, data['wheel_prize_type'], data['wheel_prize_value'], data['wheel_prize_weight'], label or WHEEL_PRIZE_TYPES[data['wheel_prize_type']], message.from_user.id)
+    await state.clear()
+    if not prize_id:
+        await message.answer("⛔ تعذّر حفظ الهدية.", reply_markup=wheel_admin_keyboard()); return
+    await message.answer(f"✅ <b>تمت إضافة الهدية #{prize_id}</b>\n{html.escape(label)}\nسيتم إدراجها فوراً في العجلة.", reply_markup=wheel_admin_keyboard(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_wheel_prizes")
+async def adm_wheel_prizes_callback(callback: CallbackQuery):
+    if not await ensure_admin_callback(callback): return
+    prizes = await asyncio.to_thread(repo.list_wheel_prizes, True)
+    text = "📋 <b>جوائز عجلة الحظ</b>\n\n"; rows = []
+    for p in prizes[:40]:
+        status = '✅' if p.get('is_active') else '⛔'
+        text += f"{status} <b>#{p['id']} {html.escape(p.get('label') or '')}</b> — {p.get('prize_type')} | قيمة: {p.get('prize_value')} | وزن: {p.get('weight')}\n"
+        if p.get('is_active'): rows.append([premium_button(text=f"⛔ تعطيل #{p['id']}", callback_data=f"adm_wheel_disable_{p['id']}")])
+    rows.append([premium_button(text="↩️ رجوع", callback_data="adm_wheel_menu")])
+    await safe_edit_text(callback.message, text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), parse_mode="HTML"); await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("adm_wheel_disable_"))
+async def adm_wheel_disable_callback(callback: CallbackQuery):
+    if not await ensure_admin_callback(callback): return
+    await asyncio.to_thread(repo.disable_wheel_prize, int(callback.data.replace('adm_wheel_disable_', '')))
+    await safe_answer_callback(callback, "تم تعطيل الهدية."); await adm_wheel_prizes_callback(callback)
+
+
+@router.callback_query(F.data == "adm_wheel_history")
+async def adm_wheel_history_callback(callback: CallbackQuery):
+    if not await ensure_admin_callback(callback): return
+    rows = await asyncio.to_thread(repo.get_wheel_history, 35)
+    text = "📜 <b>آخر نتائج عجلة الحظ</b>\n\n"
+    for r in rows:
+        user = html.escape(str(r.get('telegram_username') or r.get('telegram_id')))
+        text += f"• <b>{user}</b> (<code>{r.get('telegram_id')}</code>) — {html.escape(str(r.get('prize_label') or '—'))} — {r.get('created_at').strftime('%Y-%m-%d %H:%M') if r.get('created_at') else ''}\n"
+    await safe_edit_text(callback.message, text[:3900] or 'لا توجد نتائج بعد.', reply_markup=wheel_admin_keyboard(), parse_mode="HTML"); await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "adm_wheel_gift")
+async def adm_wheel_gift_callback(callback: CallbackQuery, state: FSMContext):
+    if not await ensure_admin_callback(callback): return
+    await state.clear(); await safe_edit_text(callback.message, "🎁 أرسل Telegram ID للمستخدم الذي تريد إهداءه لفات:", parse_mode="HTML"); await state.set_state(AdminStates.wheel_gift_user_id); await safe_answer_callback(callback)
+
+
+@router.message(AdminStates.wheel_gift_user_id)
+async def process_wheel_gift_user_id(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state): return
+    tid = (message.text or '').strip()
+    user = await asyncio.to_thread(repo.get_user, tid)
+    if not user:
+        await message.answer("⛔ لم يتم العثور على مستخدم بهذا الـ ID. أعد الإرسال:"); return
+    await state.update_data(wheel_gift_user_id=tid, wheel_gift_username=user.get('telegram_username') or 'بدون معرف')
+    await message.answer(f"👤 المستخدم: <b>{html.escape(user.get('telegram_username') or 'بدون معرف')}</b>\n🔖 ID: <code>{tid}</code>\n\nأرسل عدد اللفات التي تريد إهداءها:", parse_mode="HTML"); await state.set_state(AdminStates.wheel_gift_amount)
+
+
+@router.message(AdminStates.wheel_gift_amount)
+async def process_wheel_gift_amount(message: Message, state: FSMContext):
+    if not await ensure_admin_message(message, state): return
+    try:
+        amount = int((message.text or '').strip())
+        if amount <= 0 or amount > 1000: raise ValueError
+    except ValueError:
+        await message.answer("⛔ أرسل عدداً صحيحاً بين 1 و1000."); return
+    data = await state.get_data(); result = await asyncio.to_thread(repo.gift_wheel_spins_atomic, data['wheel_gift_user_id'], amount, message.from_user.id); await state.clear()
+    if not result.get('ok'):
+        await message.answer("⛔ تعذّر إهداء اللفات.", reply_markup=wheel_admin_keyboard()); return
+    await message.answer(f"✅ تمت إضافة <b>{amount}</b> لفة إلى المستخدم <code>{data['wheel_gift_user_id']}</code>.\nلفات المستخدم الحالية: <b>{result['current_spins']}</b>", reply_markup=wheel_admin_keyboard(), parse_mode="HTML")
 
 
 # ================================================================

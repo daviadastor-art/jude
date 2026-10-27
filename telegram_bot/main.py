@@ -2872,6 +2872,13 @@ async def serve_user_app_pingo_html(request):
     return _no_cache_file_response(html_path)
 
 
+async def serve_wheel_html(request):
+    html_path = os.path.join(WEBAPP_DIR, "wheel.html")
+    if not os.path.exists(html_path):
+        return web.Response(text="Wheel app not found", status=404)
+    return _no_cache_file_response(html_path)
+
+
 def _collect_user_me_payload_sync(telegram_id, bot_username):
     """جمع حمولة لوحة Jude Robert للمستخدم — يعمل بخيط جانبي، وبقراءة واحدة لكل كيان.
     🌟 (Update 20) كان user_me ينفذ ~25 استعلاماً بلا تزامن: get_user_features_settings
@@ -3122,6 +3129,61 @@ async def user_me_api_handler(request):
     return web.json_response(data, status=status)
 
 
+def _miniapp_user_id(request):
+    user_obj = _verify_telegram_init_data(request.headers.get('X-Telegram-Init-Data', ''))
+    return str(user_obj.get('id', '')) if user_obj else None
+
+
+async def user_wheel_api_handler(request):
+    telegram_id = _miniapp_user_id(request)
+    if not telegram_id:
+        return web.json_response({'error': 'غير مصرّح'}, status=403)
+    try:
+        state = await asyncio.to_thread(repo.get_wheel_user_state, telegram_id, True)
+        if not state:
+            return web.json_response({'error': 'المستخدم غير موجود'}, status=404)
+        return web.json_response(state)
+    except Exception as exc:
+        logger.error(f"user_wheel_api error: {exc}", exc_info=True)
+        return web.json_response({'error': 'تعذّر تحميل بيانات العجلة'}, status=500)
+
+
+async def user_buy_wheel_spin_handler(request):
+    telegram_id = _miniapp_user_id(request)
+    if not telegram_id:
+        return web.json_response({'error': 'غير مصرّح'}, status=403)
+    try:
+        result = await asyncio.to_thread(repo.buy_wheel_spin_atomic, telegram_id)
+        if not result.get('ok'):
+            messages = {
+                'insufficient_balance': 'رصيدك غير كافٍ. سعر اللفة 250 ل.س جديدة.',
+                'user_not_found': 'المستخدم غير موجود.',
+                'disabled': 'عجلة الحظ متوقفة حالياً من لوحة الإدارة.',
+            }
+            return web.json_response({'error': messages.get(result.get('reason'), 'تعذّر شراء اللفة.')}, status=400)
+        return web.json_response(result)
+    except Exception as exc:
+        logger.error(f"user_buy_wheel_spin error: {exc}", exc_info=True)
+        return web.json_response({'error': 'تعذّر شراء اللفة الآن'}, status=500)
+
+
+async def user_wallet_spin_handler(request):
+    telegram_id = _miniapp_user_id(request)
+    if not telegram_id:
+        return web.json_response({'error': 'غير مصرّح'}, status=403)
+    try:
+        result = await asyncio.to_thread(repo.spin_wheel_wallet_atomic, telegram_id)
+        if not result.get('ok'):
+            messages = {'no_spins': 'لا توجد لفات حالياً. اشترِ لفة أو انتظر هدية الخسارة اليومية.',
+                        'no_prizes': 'لا توجد جوائز مفعّلة حالياً.',
+                        'disabled': 'عجلة الحظ متوقفة حالياً من لوحة الإدارة.'}
+            return web.json_response({'error': messages.get(result.get('reason'), 'تعذّر تدوير العجلة.')}, status=400)
+        return web.json_response(result)
+    except Exception as exc:
+        logger.error(f"user_wallet_spin error: {exc}", exc_info=True)
+        return web.json_response({'error': 'تعذّر تدوير العجلة الآن'}, status=500)
+
+
 async def user_checkin_handler(request):
     """🌟 (Update 12) تسجيل الحضور اليومي."""
     user_obj = _verify_telegram_init_data(request.headers.get('X-Telegram-Init-Data', ''))
@@ -3302,6 +3364,13 @@ async def user_spin_wheel_handler(request):
         if not allowed:
             return web.json_response({'error': reason}, status=503)
         payload = await request.json()
+        # توافق خلفي مع Mini App القديمة: كل دوران يمر الآن عبر محفظة
+        # اللفات الجديدة، ولا يعود الإيداع الواحد يمنح لفة مستقلة.
+        if payload.get('deposit_tx_id'):
+            result = await asyncio.to_thread(repo.spin_wheel_wallet_atomic, telegram_id)
+            if not result.get('ok'):
+                return web.json_response({'error': 'لا توجد لفة متاحة حالياً. اشترِ لفة أو انتظر هدية الخسارة اليومية.'}, status=400)
+            return web.json_response(result)
         deposit_tx_id = int(payload.get('deposit_tx_id') or 0)
         if not deposit_tx_id:
             return web.json_response({'error': 'رقم الإيداع مطلوب'}, status=400)
@@ -3628,12 +3697,16 @@ def main():
     app.router.add_get("/dashboard", serve_dashboard_html)
     app.router.add_get("/user-app", serve_user_app_html)
     app.router.add_get("/user-app-pingo", serve_user_app_pingo_html)
+    app.router.add_get("/wheel", serve_wheel_html)
     # Premium visual assets are read-only and additive; original routes/content remain unchanged.
     app.router.add_static("/emoji-assets", EMOJI_ASSETS_DIR, show_index=False)
     app.router.add_get("/api/user/me", user_me_api_handler)
     app.router.add_post("/api/user/checkin", user_checkin_handler)
     app.router.add_post("/api/user/bonus-to-game", user_bonus_to_game_handler)
     app.router.add_post("/api/user/spin-wheel", user_spin_wheel_handler)
+    app.router.add_get("/api/user/wheel", user_wheel_api_handler)
+    app.router.add_post("/api/user/wheel/buy", user_buy_wheel_spin_handler)
+    app.router.add_post("/api/user/wheel/spin", user_wallet_spin_handler)
     app.router.add_post("/api/admin/flash", admin_flash_handler)
     app.router.add_post("/api/admin/gift-campaigns", admin_gift_campaigns_handler)
     app.router.add_get("/api/admin/features", admin_features_get_handler)

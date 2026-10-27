@@ -745,6 +745,66 @@ class DatabaseManager:
         );
         """
 
+        wheel_prizes_table = """
+        CREATE TABLE IF NOT EXISTS wheel_prizes (
+            id SERIAL PRIMARY KEY,
+            prize_type VARCHAR(30) NOT NULL,
+            prize_value NUMERIC(15, 2) DEFAULT 0,
+            weight NUMERIC(12, 4) NOT NULL DEFAULT 1,
+            label VARCHAR(180) NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_by VARCHAR(50),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+
+        wheel_wallets_table = """
+        CREATE TABLE IF NOT EXISTS wheel_wallets (
+            telegram_id VARCHAR(50) PRIMARY KEY,
+            paid_spins INTEGER NOT NULL DEFAULT 0,
+            free_spins INTEGER NOT NULL DEFAULT 0,
+            luck_boost NUMERIC(7, 2) NOT NULL DEFAULT 0,
+            total_spins INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+
+        wheel_loss_rewards_table = """
+        CREATE TABLE IF NOT EXISTS wheel_loss_rewards (
+            id BIGSERIAL PRIMARY KEY,
+            telegram_id VARCHAR(50) NOT NULL,
+            reward_date DATE NOT NULL,
+            loss_amount BIGINT NOT NULL DEFAULT 0,
+            spins_added INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(telegram_id, reward_date)
+        );
+        """
+
+        insert_default_wheel_prizes = """
+        INSERT INTO wheel_prizes (prize_type, prize_value, weight, label, created_by)
+        SELECT * FROM (VALUES
+            ('cash', 250, 18, 'رصيد فوري 250 ل.س', 'system'),
+            ('cash', 500, 10, 'رصيد فوري 500 ل.س', 'system'),
+            ('bonus_percent', 10, 8, 'بونص شحن 10%', 'system'),
+            ('free_spin', 1, 12, 'لفة مجانية جديدة', 'system'),
+            ('retry', 1, 8, 'إعادة المحاولة', 'system'),
+            ('luck', 25, 5, 'حظ أوفر +25%', 'system'),
+            ('nothing', 0, 39, 'حظ أوفر بالمرة القادمة', 'system')
+        ) AS defaults(prize_type, prize_value, weight, label, created_by)
+        WHERE NOT EXISTS (SELECT 1 FROM wheel_prizes);
+        """
+
+        alter_users_wheel_bonus = "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_bonus_percent NUMERIC(7, 2) DEFAULT 0;"
+        alter_wheel_spins_columns = [
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS spin_source VARCHAR(30) DEFAULT 'legacy_deposit';",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_id INTEGER;",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_type VARCHAR(30);",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_value NUMERIC(15, 2) DEFAULT 0;",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_label VARCHAR(180);",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS is_win BOOLEAN DEFAULT TRUE;",
+        ]
+
         # 🆕 (Update 15) إعدادات العجلة
         alter_feat_wheel_enabled = "ALTER TABLE user_features_settings ADD COLUMN IF NOT EXISTS wheel_enabled BOOLEAN DEFAULT TRUE;"
         alter_feat_wheel_segments = "ALTER TABLE user_features_settings ADD COLUMN IF NOT EXISTS wheel_segments_json TEXT DEFAULT '[[0,30],[2,20],[0,10],[5,15],[10,10],[0,5],[15,7],[25,3]]';"
@@ -877,6 +937,12 @@ class DatabaseManager:
             alter_settings_lb_auto_credit,
             alter_settings_lb_last_settled,
             wheel_spins_table,
+            wheel_prizes_table,
+            wheel_wallets_table,
+            wheel_loss_rewards_table,
+            insert_default_wheel_prizes,
+            alter_users_wheel_bonus,
+            *alter_wheel_spins_columns,
             alter_feat_wheel_enabled,
             alter_feat_wheel_segments,
             alter_feat_wheel_min_deposit,

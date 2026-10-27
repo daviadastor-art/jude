@@ -25,6 +25,12 @@ def get_guides_url():
     return f"{base}/guides.html?v=guides-miniapp-v2-20260801"
 
 
+def get_wheel_url():
+    """رابط Mini App عجلة الحظ مع كاسر كاش صريح."""
+    base = getattr(settings, 'RENDER_EXTERNAL_URL', 'https://ichancy100.onrender.com')
+    return f"{base}/wheel?v=jude-wheel-v1"
+
+
 def get_main_menu_keyboard(is_admin=False):
     keyboard = []
     # User Mini App access is temporarily hidden until its display issue is fixed.
@@ -46,6 +52,10 @@ def get_main_menu_keyboard(is_admin=False):
         [
             premium_button(text="🧧 إهداء رصيد", callback_data="gift_send"),
             premium_button(text="🎟️ كود هدية", callback_data="gift_redeem")
+        ],
+        [
+            premium_button(text="🎡 عجلة الحظ", callback_data="wheel_menu"),
+            premium_button(text="🛒 شراء لفة", callback_data="wheel_buy_spin")
         ],
         [
             premium_button(text="🪙 الإحالات", callback_data="referral_menu"),
