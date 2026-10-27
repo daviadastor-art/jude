@@ -3,6 +3,7 @@ import asyncio
 import random
 import string
 import logging
+import html
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from contextlib import suppress
@@ -1265,6 +1266,164 @@ async def process_ichancy_password(message: Message, state: FSMContext):
 # الإيداع في البوت (مع التحسينات الجديدة)
 # ================================================================
 
+_OXAPAY_FINAL_STATUSES = {'paid', 'completed', 'confirmed', 'success', 'successful'}
+
+
+def get_oxapay_status_keyboard(tx_id, include_cancel=True):
+    rows = [[premium_button(text="🔄 التحقق من حالة الدفع", callback_data=f"usdt_check_{int(tx_id)}")]]
+    if include_cancel:
+        rows.append([premium_button(text="🛑 إلغاء طلب الشحن", callback_data=f"usdt_cancel_{int(tx_id)}")])
+    rows.append([premium_button(text="↩️ القائمة الرئيسية", callback_data="back_to_main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_oxapay_status(tx, payment):
+    status = str(payment.get('status') or 'unknown').strip().lower()
+    status_labels = {
+        'pending': '⏳ بانتظار الدفع',
+        'waiting': '⏳ بانتظار الدفع',
+        'paying': '📨 تم رصد الدفع، بانتظار التأكيد',
+        'confirming': '🔗 العملية قيد تأكيد الشبكة',
+        'processing': '🔄 العملية قيد المعالجة',
+        'paid': '✅ تم الدفع',
+        'completed': '✅ اكتمل الدفع',
+        'confirmed': '✅ تم تأكيد الدفع',
+        'failed': '❌ فشل الدفع',
+        'expired': '⌛ انتهت صلاحية الطلب',
+        'cancelled': '🛑 أُلغي الطلب',
+    }
+    txs = payment.get('txs') or []
+    confirmations = next((item.get('confirmations') for item in txs if isinstance(item, dict) and item.get('confirmations') is not None), None)
+    tx_hash = next((item.get('tx_hash') for item in txs if isinstance(item, dict) and item.get('tx_hash')), None)
+    extra = ''
+    if confirmations is not None:
+        extra += f"\n🔗 التأكيدات: <code>{html.escape(str(confirmations))}</code>"
+    if tx_hash:
+        extra += f"\n🧷 Tx Hash: <code>{html.escape(str(tx_hash))}</code>"
+    return (
+        "🪙 <b>حالة شحن USDT</b>\n\n"
+        f"📍 رقم الطلب: <code>#{int(tx.get('id'))}</code>\n"
+        f"💳 المبلغ المطلوب: <code>{html.escape(str(tx.get('expected_crypto_amount') or tx.get('original_amount') or '—'))} USDT</code>\n"
+        f"🧭 الشبكة: <code>{html.escape(str(tx.get('payment_network') or tx.get('payment_method') or '—'))}</code>\n"
+        f"📈 الحالة الحالية: <b>{status_labels.get(status, html.escape(status))}</b>{extra}"
+    ), status
+
+
+async def _load_owned_oxapay_transaction(callback, tx_id):
+    try:
+        tx = await asyncio.to_thread(repo.get_transaction_by_id, int(tx_id))
+    except (TypeError, ValueError):
+        tx = None
+    if not tx or str(tx.get('user_telegram_id')) != str(callback.from_user.id):
+        await safe_answer_callback(callback, "⛔ هذا الطلب غير موجود أو لا يخص حسابك.", show_alert=True)
+        return None
+    if tx.get('payment_method') not in ('usdt_polygon', 'usdt_trc', 'usdt_bep'):
+        await safe_answer_callback(callback, "⛔ هذا ليس طلب USDT إلكتروني.", show_alert=True)
+        return None
+    return tx
+
+
+async def _apply_oxapay_status(bot, tx, payment):
+    payload = dict(payment or {})
+    payload.setdefault('track_id', tx.get('oxapay_track_id'))
+    payload.setdefault('order_id', tx.get('oxapay_order_id'))
+    return await asyncio.to_thread(repo.complete_oxapay_payment_atomic, payload)
+
+
+@router.callback_query(F.data.startswith("usdt_check_"))
+async def check_oxapay_payment_callback(callback: CallbackQuery):
+    tx_id = callback.data.replace("usdt_check_", "", 1)
+    tx = await _load_owned_oxapay_transaction(callback, tx_id)
+    if not tx:
+        return
+    if tx.get('status') == 'approved':
+        await safe_answer_callback(callback, "✅ تم اعتماد هذا الطلب وإضافة الرصيد مسبقاً.", show_alert=True)
+        return
+    if tx.get('status') != 'pending':
+        await safe_answer_callback(callback, f"حالة الطلب: {tx.get('status')}", show_alert=True)
+        return
+    await safe_answer_callback(callback, "🔄 جاري الاستعلام من شبكة OxaPay...")
+    try:
+        payment = await oxapay.get_payment_information(tx.get('oxapay_track_id'))
+    except Exception as exc:
+        logger.warning(f"OxaPay manual status check failed for tx {tx_id}: {exc}")
+        await callback.message.edit_text(
+            "⛔ <b>تعذر جلب حالة الدفع حالياً</b>\n\nحاول الضغط على زر التحقق بعد لحظات.",
+            reply_markup=get_oxapay_status_keyboard(tx_id), parse_mode="HTML",
+        )
+        return
+    result = await _apply_oxapay_status(callback.bot, tx, payment)
+    if result.get('deposit_added'):
+        await callback.message.edit_text(
+            "✅ <b>تم تأكيد شحن USDT وإضافة الرصيد بنجاح</b>\n\n"
+            f"🪙 تمت إضافة: <code>{result['deposit_added']:,} ل.س جديدة</code>\n"
+            f"🎁 البونص: <code>{result.get('bonus_added', 0):,} ل.س</code>\n"
+            f"💰 رصيدك الجديد: <code>{result['new_balance']:,} ل.س جديدة</code>",
+            reply_markup=get_user_menu_keyboard(callback.from_user.id), parse_mode="HTML",
+        )
+        return
+    text, status = format_oxapay_status(tx, payment)
+    if result.get('reason') == 'amount_mismatch':
+        text += "\n\n⚠️ المبلغ المستلم لا يطابق المبلغ المطلوب. تواصل مع الدعم قبل إرسال أي مبلغ إضافي."
+    elif status in _OXAPAY_FINAL_STATUSES and result.get('already_processed'):
+        text += "\n\n✅ تمت معالجة هذا الدفع مسبقاً. افحص رصيدك من القائمة الرئيسية."
+    else:
+        text += "\n\nيمكنك إعادة التحقق بعد إتمام التحويل وانتظار تأكيدات الشبكة."
+    await callback.message.edit_text(text, reply_markup=get_oxapay_status_keyboard(tx_id), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("usdt_cancel_"))
+async def cancel_oxapay_payment_callback(callback: CallbackQuery):
+    tx_id = callback.data.replace("usdt_cancel_", "", 1)
+    tx = await _load_owned_oxapay_transaction(callback, tx_id)
+    if not tx:
+        return
+    if tx.get('status') != 'pending':
+        await safe_answer_callback(callback, f"لا يمكن إلغاء الطلب؛ حالته الحالية: {tx.get('status')}", show_alert=True)
+        return
+    await safe_answer_callback(callback, "🔄 يتم التأكد من عدم وصول الدفع قبل الإلغاء...")
+    try:
+        payment = await oxapay.get_payment_information(tx.get('oxapay_track_id'))
+    except Exception as exc:
+        logger.warning(f"OxaPay cancel precheck failed for tx {tx_id}: {exc}")
+        await callback.message.edit_text(
+            "⛔ <b>تعذر التحقق من حالة الدفع</b>\n\nلم يتم إلغاء الطلب لحماية أموالك. حاول بعد لحظات.",
+            reply_markup=get_oxapay_status_keyboard(tx_id), parse_mode="HTML",
+        )
+        return
+    status = str(payment.get('status') or '').strip().lower()
+    if status in _OXAPAY_FINAL_STATUSES:
+        result = await _apply_oxapay_status(callback.bot, tx, payment)
+        if result.get('deposit_added') or result.get('already_processed'):
+            await callback.message.edit_text(
+                "✅ تم العثور على عملية دفع مكتملة، لذلك لم يتم إلغاء الطلب.\n\n"
+                "تمت معالجة الشحن أو هو قيد اعتماد الرصيد.",
+                reply_markup=get_user_menu_keyboard(callback.from_user.id), parse_mode="HTML",
+            )
+            return
+        text, _ = format_oxapay_status(tx, payment)
+        await callback.message.edit_text(
+            text + "\n\n⚠️ أبلغت OxaPay عن اكتمال الدفع، لكن تعذر اعتماد المبلغ تلقائياً. لم يتم الإلغاء؛ تواصل مع الدعم مع رقم الطلب.",
+            reply_markup=get_oxapay_status_keyboard(tx_id, include_cancel=False), parse_mode="HTML",
+        )
+        return
+    if payment.get('txs') or status in {'confirming', 'processing', 'paying'}:
+        text, _ = format_oxapay_status(tx, payment)
+        await callback.message.edit_text(
+            text + "\n\n⚠️ تم رصد حركة دفع على الشبكة، لذلك لم يتم الإلغاء لحماية أموالك. انتظر التأكيد أو تواصل مع الدعم.",
+            reply_markup=get_oxapay_status_keyboard(tx_id, include_cancel=False), parse_mode="HTML",
+        )
+        return
+    result = await asyncio.to_thread(repo.cancel_oxapay_transaction_atomic, int(tx_id), callback.from_user.id)
+    if result.get('cancelled'):
+        await callback.message.edit_text(
+            "🛑 <b>تم إلغاء طلب شحن USDT</b>\n\n"
+            "لم يتم خصم أي رصيد من حسابك. يمكنك إنشاء طلب جديد من القائمة الرئيسية.",
+            reply_markup=get_user_menu_keyboard(callback.from_user.id), parse_mode="HTML",
+        )
+    else:
+        await safe_answer_callback(callback, "تعذر إلغاء الطلب؛ ربما تمت معالجته للتو.", show_alert=True)
+
 @router.callback_query(F.data == "deposit_bot")
 async def deposit_bot_callback(callback: CallbackQuery, state: FSMContext):
     await start_deposit_flow(callback.message, callback.from_user.id, state, edit=True)
@@ -1469,8 +1628,9 @@ async def process_deposit_amount(message: Message, state: FSMContext):
                 f"🧭 الشبكة: <code>{payment.get('network') or gateway}</code>\n\n"
                 f"📨 <b>حوّل المبلغ إلى العنوان التالي:</b>\n<code>{payment['address']}</code>\n\n"
                 "🚧 أرسل USDT على نفس الشبكة فقط. رسوم الشبكة ورسوم الدفع عليك، وسيتم التحقق تلقائياً وإضافة الرصيد بعد تأكيد الشبكة.\n"
-                f"📍 رقم الطلب: <code>#{tx_id}</code>",
-                reply_markup=get_user_menu_keyboard(message.from_user.id), parse_mode="HTML"
+                f"📍 رقم الطلب: <code>#{tx_id}</code>\n\n"
+                "بعد التحويل اضغط <b>التحقق من حالة الدفع</b>. يمكنك إلغاء الطلب إذا لم يتم الدفع.",
+                reply_markup=get_oxapay_status_keyboard(tx_id), parse_mode="HTML"
             )
             await state.clear()
             return

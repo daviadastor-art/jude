@@ -5,7 +5,7 @@ import database.repository as repo
 
 
 class OxaPayWebhookFixTests(unittest.TestCase):
-    def test_only_paid_state_is_processed(self):
+    def test_non_final_state_is_not_processed(self):
         with patch.object(repo.DatabaseManager, "get_connection") as get_connection:
             result = repo.complete_oxapay_payment_atomic(
                 {"track_id": "track-1", "status": " Paying "}
@@ -13,6 +13,32 @@ class OxaPayWebhookFixTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["ignored"])
         get_connection.assert_not_called()
+
+    def test_completed_state_is_supported(self):
+        class Cursor:
+            def execute(self, *args):
+                pass
+
+            def fetchone(self):
+                return None
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self):
+                return Cursor()
+
+            def rollback(self):
+                pass
+
+        with patch.object(repo.DatabaseManager, "get_connection", return_value=Connection()) as get_connection:
+            result = repo.complete_oxapay_payment_atomic(
+                {"track_id": "track-completed", "status": " Completed "}
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "transaction_not_found")
+        get_connection.assert_called_once()
 
     def test_paid_state_is_trimmed_and_case_insensitive(self):
         class Cursor:

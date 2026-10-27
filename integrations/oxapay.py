@@ -157,6 +157,40 @@ async def create_white_label_payment(*, amount_usdt: Decimal, network: str, orde
             return data
 
 
+async def get_payment_information(track_id: str) -> dict:
+    """Retrieve the live payment state from OxaPay Payment Information API."""
+    config_error = configuration_error()
+    if config_error:
+        raise RuntimeError(f"OxaPay configuration error: {config_error}")
+    clean_track_id = str(track_id or '').strip()
+    if not clean_track_id:
+        raise ValueError("Missing OxaPay track_id")
+    timeout = aiohttp.ClientTimeout(total=12, connect=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(
+            f"{API_BASE}/payment/{clean_track_id}",
+            headers={"merchant_api_key": MERCHANT_API_KEY, "Content-Type": "application/json"},
+        ) as response:
+            try:
+                body = await response.json(content_type=None)
+            except (aiohttp.ContentTypeError, ValueError) as exc:
+                raw_body = (await response.text())[:500]
+                raise RuntimeError(f"OxaPay returned non-JSON response (HTTP {response.status}): {raw_body}") from exc
+            try:
+                provider_status = int(body.get("status") or response.status)
+            except (TypeError, ValueError):
+                provider_status = response.status
+            if response.status >= 400 or provider_status >= 400:
+                error = body.get("error")
+                if isinstance(error, dict):
+                    error = error.get("message") or error.get("key") or error.get("type")
+                raise RuntimeError(f"OxaPay status error ({provider_status}): {error or body.get('message') or 'unknown error'}")
+            data = body.get("data") or {}
+            if not data:
+                raise RuntimeError("OxaPay returned an empty payment status")
+            return data
+
+
 def parse_callback(raw_body: bytes, signature: str | None) -> dict:
     if not verify_hmac(raw_body, signature):
         raise PermissionError("Invalid OxaPay HMAC signature")

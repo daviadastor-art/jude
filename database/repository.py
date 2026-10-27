@@ -516,11 +516,10 @@ def complete_oxapay_payment_atomic(payload):
     order_id = str(payload.get('order_id') or '').strip()
     if not track_id and not order_id:
         return {'ok': False, 'reason': 'missing_reference'}
-    # OxaPay documents ``Paid`` but providers/proxies may add whitespace or
-    # vary the case.  Only the confirmed paid state is ever credited; paying
-    # (and every other state) is acknowledged and ignored.
+    # OxaPay may report the final state as Paid or Completed depending on the
+    # callback/API version. Only final confirmed states are ever credited.
     status = str(payload.get('status') or '').strip().lower()
-    if status != 'paid':
+    if status not in {'paid', 'completed', 'confirmed', 'success', 'successful'}:
         return {'ok': True, 'ignored': True, 'status': payload.get('status')}
     conn = cursor = None
     try:
@@ -603,6 +602,52 @@ def complete_oxapay_payment_atomic(payload):
         if conn:
             conn.rollback()
         logger.error(f"complete_oxapay_payment_atomic error: {exc}", exc_info=True)
+        return {'ok': False, 'reason': 'error'}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            DatabaseManager.put_connection(conn)
+
+
+def cancel_oxapay_transaction_atomic(tx_id, telegram_id):
+    """Cancel one user's pending OxaPay deposit without deleting its audit trail."""
+    conn = cursor = None
+    try:
+        conn = DatabaseManager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT id, user_telegram_id, payment_method, status
+                 FROM transactions WHERE id = %s FOR UPDATE""",
+            (int(tx_id),),
+        )
+        row = cursor.fetchone()
+        if not row:
+            conn.rollback()
+            return {'ok': False, 'reason': 'not_found'}
+        found_id, owner_id, payment_method, status = row
+        if str(owner_id) != str(telegram_id):
+            conn.rollback()
+            return {'ok': False, 'reason': 'not_owner'}
+        if payment_method not in ('usdt_polygon', 'usdt_trc', 'usdt_bep'):
+            conn.rollback()
+            return {'ok': False, 'reason': 'invalid_payment_method'}
+        if status != 'pending':
+            conn.rollback()
+            return {'ok': True, 'already_processed': True, 'status': status, 'tx_id': found_id}
+        cursor.execute(
+            """UPDATE transactions
+                  SET status = 'cancelled', reviewed_by = 'user', reviewed_at = CURRENT_TIMESTAMP,
+                      rejection_reason = 'Cancelled by user'
+                WHERE id = %s AND status = 'pending'""",
+            (int(tx_id),),
+        )
+        conn.commit()
+        return {'ok': True, 'cancelled': True, 'tx_id': found_id}
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        logger.error(f"cancel_oxapay_transaction_atomic error: {exc}", exc_info=True)
         return {'ok': False, 'reason': 'error'}
     finally:
         if cursor:
