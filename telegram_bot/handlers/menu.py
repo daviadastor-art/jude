@@ -1278,10 +1278,24 @@ WHEEL_TERMS_PATHS = [
 
 def _wheel_bot_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503")],
-        [premium_button(text="🛒 شراء لفة — 250 ل.س جديدة", callback_data="wheel_buy_spin")],
-        [premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms")],
+        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="danger")],
+        [
+            premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms"),
+            premium_button(text="🎁 الجوائز", callback_data="wheel_prizes")
+        ],
+        [premium_button(text="🛒 شراء اللفة — 250 ل.س جديدة", callback_data="wheel_buy_spin", style="primary")],
         [premium_button(text="↩️ القائمة الرئيسية", callback_data="back_to_main_menu")],
+    ])
+
+
+def _wheel_prizes_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="danger")],
+        [
+            premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms"),
+            premium_button(text="↩️ العودة للعجلة", callback_data="wheel_menu")
+        ],
+        [premium_button(text="🛒 شراء اللفة — 250 ل.س جديدة", callback_data="wheel_buy_spin", style="primary")],
     ])
 
 
@@ -1341,6 +1355,41 @@ async def wheel_buy_spin_callback(callback: CallbackQuery):
         "هل تريد المتابعة؟",
         _wheel_purchase_confirm_keyboard()
     )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "wheel_prizes")
+async def wheel_prizes_callback(callback: CallbackQuery):
+    state = await asyncio.to_thread(repo.get_wheel_user_state, str(callback.from_user.id), False)
+    if not state:
+        await safe_answer_callback(callback, "تعذّر تحميل الجوائز حالياً.", show_alert=True)
+        return
+    prizes = state.get('prizes') or []
+    type_names = {
+        'cash': 'رصيد فوري',
+        'bonus_percent': 'بونص على الشحن',
+        'free_spin': 'لفات مجانية',
+        'retry': 'إعادة محاولة',
+        'luck': 'حظ أوفر',
+        'nothing': 'حظ أوفر بالمرة القادمة',
+    }
+    lines = ["🎁 الجوائز الموجودة في JudeSpin", "", "كل لفة يتم اختيار نتيجتها عشوائياً من الجوائز المفعّلة حالياً:", ""]
+    for index, prize in enumerate(prizes, 1):
+        label = str(prize.get('label') or 'جائزة')
+        kind = type_names.get(prize.get('type'), prize.get('type') or 'جائزة')
+        value = float(prize.get('value') or 0)
+        if value and prize.get('type') == 'cash':
+            detail = f" — {int(value):,} ل.س جديدة"
+        elif value and prize.get('type') in ('bonus_percent', 'luck'):
+            detail = f" — {value:g}%"
+        elif value and prize.get('type') in ('free_spin', 'retry'):
+            detail = f" — {int(value)}"
+        else:
+            detail = ""
+        lines.append(f"{index}. {label}{detail}\n   النوع: {kind}")
+    if not prizes:
+        lines.append("لا توجد جوائز مفعّلة حالياً.")
+    await _edit_wheel_message(callback.message, "\n".join(lines), _wheel_prizes_keyboard())
     await safe_answer_callback(callback)
 
 
