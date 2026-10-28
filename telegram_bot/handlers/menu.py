@@ -1278,7 +1278,7 @@ WHEEL_TERMS_PATHS = [
 
 def _wheel_bot_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="danger")],
+        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="success")],
         [
             premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms"),
             premium_button(text="🎁 الجوائز", callback_data="wheel_prizes")
@@ -1290,7 +1290,7 @@ def _wheel_bot_keyboard():
 
 def _wheel_prizes_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="danger")],
+        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503", style="success")],
         [
             premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms"),
             premium_button(text="↩️ العودة للعجلة", callback_data="wheel_menu")
