@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from contextlib import suppress
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, FSInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, FSInputFile, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import settings
@@ -1270,12 +1270,17 @@ async def process_ichancy_password(message: Message, state: FSMContext):
 
 
 WHEEL_BANNER_PATH = str((__import__('pathlib').Path(__file__).resolve().parents[2] / 'webapp' / 'judespin-banner.png'))
+WHEEL_TERMS_PATHS = [
+    str((__import__('pathlib').Path(__file__).resolve().parents[2] / 'webapp' / 'judespin-terms-1.jpg')),
+    str((__import__('pathlib').Path(__file__).resolve().parents[2] / 'webapp' / 'judespin-terms-2.jpg')),
+]
 
 
 def _wheel_bot_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="🎡 فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()))],
+        [premium_button(text="فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()), icon_custom_emoji_id="5859717477860122503")],
         [premium_button(text="🛒 شراء لفة — 250 ل.س جديدة", callback_data="wheel_buy_spin")],
+        [premium_button(text="📜 الشروط والأحكام", callback_data="wheel_terms")],
         [premium_button(text="↩️ القائمة الرئيسية", callback_data="back_to_main_menu")],
     ])
 
@@ -1365,6 +1370,24 @@ async def wheel_buy_confirm_callback(callback: CallbackQuery):
         f"🎟️ لفاتك الحالية: {state.get('current_spins', 0)}",
         _wheel_bot_keyboard()
     )
+
+
+@router.callback_query(F.data == "wheel_terms")
+async def wheel_terms_callback(callback: CallbackQuery):
+    """إرسال صور الشروط والأحكام المرفقة من داخل شاشة JudeSpin."""
+    try:
+        await callback.message.answer_media_group([
+            InputMediaPhoto(media=FSInputFile(WHEEL_TERMS_PATHS[0])),
+            InputMediaPhoto(media=FSInputFile(WHEEL_TERMS_PATHS[1])),
+        ])
+        await callback.message.answer(
+            "📜 الشروط والأحكام\n\nيرجى قراءة الصور أعلاه قبل استخدام JudeSpin.",
+            reply_markup=_wheel_bot_keyboard()
+        )
+        await safe_answer_callback(callback, "تم إرسال الشروط والأحكام")
+    except Exception as exc:
+        logger.error(f"JudeSpin terms send failed: {exc}", exc_info=True)
+        await safe_answer_callback(callback, "تعذّر إرسال الشروط حالياً.", show_alert=True)
 
 
 # ================================================================

@@ -49,7 +49,7 @@ def get_main_menu_keyboard(is_admin=False):
             premium_button(text="شحن iChancy", callback_data="deposit_game_acc", icon_custom_emoji_id="5949437596621872513")
         ],
         [premium_button(text="🧭 حساب iChancy", callback_data="ichancy_menu")],
-        [premium_button(text="🔴 JudeSpin", callback_data="wheel_menu")],
+        [premium_button(text="JudeSpin", callback_data="wheel_menu", icon_custom_emoji_id="5859717477860122503")],
         [
             premium_button(text="🧧 إهداء رصيد", callback_data="gift_send"),
             premium_button(text="🎟️ كود هدية", callback_data="gift_redeem")
