@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from contextlib import suppress
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import settings
@@ -1269,25 +1269,42 @@ async def process_ichancy_password(message: Message, state: FSMContext):
 # ================================================================
 
 
+WHEEL_BANNER_PATH = str((__import__('pathlib').Path(__file__).resolve().parents[2] / 'webapp' / 'judespin-banner.png'))
+
+
 def _wheel_bot_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="🎡 فتح عجلة الحظ", web_app=WebAppInfo(url=get_wheel_url()))],
+        [premium_button(text="🎡 فتح JudeSpin", web_app=WebAppInfo(url=get_wheel_url()))],
         [premium_button(text="🛒 شراء لفة — 250 ل.س جديدة", callback_data="wheel_buy_spin")],
         [premium_button(text="↩️ القائمة الرئيسية", callback_data="back_to_main_menu")],
     ])
 
 
+def _wheel_purchase_confirm_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [premium_button(text="✅ تأكيد شراء اللفة", callback_data="wheel_buy_confirm")],
+        [premium_button(text="↩️ إلغاء", callback_data="wheel_buy_cancel")],
+    ])
+
+
 def _wheel_bot_text(state):
     return (
-        "🎡 <b>عجلة الحظ</b>\n\n"
-        f"🎟️ <b>لفاتك الحالية:</b> <code>{int(state.get('current_spins', 0))}</code>\n"
-        f"🆓 لفات مجانية: <code>{int(state.get('free_spins', 0))}</code>\n"
-        f"🛒 لفات مشتراة: <code>{int(state.get('paid_spins', 0))}</code>\n"
-        f"📊 عدد اللفات المستخدمة: <code>{int(state.get('used_spins', 0))}</code>\n"
-        f"📉 خسارتك اليوم: <code>{int(state.get('daily_loss', 0)):,}</code> ل.س جديدة\n\n"
-        "إذا تجاوزت خسارتك اليومية <b>500 ل.س جديدة</b> تحصل على لفة مجانية واحدة فقط في اليوم.\n"
-        "سعر اللفة الإضافية: <b>250 ل.س جديدة</b>."
+        "🎡 عجلة الحظ\n\n"
+        f"🎟️ لفاتك الحالية: {int(state.get('current_spins', 0))}\n"
+        f"🆓 لفات مجانية: {int(state.get('free_spins', 0))}\n"
+        f"🛒 لفات مشتراة: {int(state.get('paid_spins', 0))}\n"
+        f"📊 عدد اللفات المستخدمة: {int(state.get('used_spins', 0))}\n"
+        f"📉 خسارتك اليوم: {int(state.get('daily_loss', 0)):,} ل.س جديدة\n\n"
+        "إذا تجاوزت خسارتك اليومية 500 ل.س جديدة تحصل على لفة مجانية واحدة فقط في اليوم.\n"
+        "سعر اللفة الإضافية: 250 ل.س جديدة."
     )
+
+
+async def _edit_wheel_message(message, text, reply_markup):
+    """تعديل رسالة JudeSpin سواء كانت نصاً أو صورة مع caption."""
+    if getattr(message, 'photo', None):
+        return await message.edit_caption(caption=text, reply_markup=reply_markup)
+    return await message.edit_text(text, reply_markup=reply_markup)
 
 
 @router.callback_query(F.data == "wheel_menu")
@@ -1296,24 +1313,57 @@ async def wheel_menu_callback(callback: CallbackQuery):
     if not state:
         await safe_answer_callback(callback, "تعذّر تحميل بيانات عجلة الحظ.", show_alert=True)
         return
-    await callback.message.edit_text(_wheel_bot_text(state), reply_markup=_wheel_bot_keyboard(), parse_mode="HTML")
+    text = _wheel_bot_text(state)
+    try:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=FSInputFile(WHEEL_BANNER_PATH),
+            caption=text,
+            reply_markup=_wheel_bot_keyboard()
+        )
+    except Exception as exc:
+        logger.warning(f"JudeSpin banner message fallback: {exc}")
+        await _edit_wheel_message(callback.message, text, _wheel_bot_keyboard())
     await safe_answer_callback(callback)
 
 
 @router.callback_query(F.data == "wheel_buy_spin")
 async def wheel_buy_spin_callback(callback: CallbackQuery):
+    await _edit_wheel_message(
+        callback.message,
+        "🛒 تأكيد شراء لفة\n\n"
+        "سيتم خصم 250 ل.س جديدة من رصيدك وإضافة لفة واحدة إلى محفظتك.\n\n"
+        "هل تريد المتابعة؟",
+        _wheel_purchase_confirm_keyboard()
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "wheel_buy_cancel")
+async def wheel_buy_cancel_callback(callback: CallbackQuery):
+    state = await asyncio.to_thread(repo.get_wheel_user_state, str(callback.from_user.id), False)
+    if not state:
+        await safe_answer_callback(callback, "تعذّر تحميل بيانات العجلة.", show_alert=True)
+        return
+    await _edit_wheel_message(callback.message, _wheel_bot_text(state), _wheel_bot_keyboard())
+    await safe_answer_callback(callback, "تم إلغاء الشراء")
+
+
+@router.callback_query(F.data == "wheel_buy_confirm")
+async def wheel_buy_confirm_callback(callback: CallbackQuery):
     await safe_answer_callback(callback, "⏳ جارٍ شراء اللفة...")
     result = await asyncio.to_thread(repo.buy_wheel_spin_atomic, str(callback.from_user.id))
     if not result.get('ok'):
         message = "رصيدك غير كافٍ لشراء اللفة (السعر 250 ل.س جديدة)." if result.get('reason') == 'insufficient_balance' else "تعذّر شراء اللفة الآن."
-        await callback.message.edit_text(f"⛔ {message}", reply_markup=_wheel_bot_keyboard(), parse_mode="HTML")
+        await _edit_wheel_message(callback.message, f"⛔ {message}", _wheel_bot_keyboard())
         return
     state = await asyncio.to_thread(repo.get_wheel_user_state, str(callback.from_user.id), False)
-    await callback.message.edit_text(
-        "✅ <b>تم شراء لفة بنجاح</b>\n\n"
-        f"💳 تم خصم: <code>{result['price']:,} ل.س جديدة</code>\n"
-        f"🎟️ لفاتك الحالية: <code>{state.get('current_spins', 0)}</code>",
-        reply_markup=_wheel_bot_keyboard(), parse_mode="HTML"
+    await _edit_wheel_message(
+        callback.message,
+        "✅ تم شراء لفة بنجاح\n\n"
+        f"💳 تم خصم: {result['price']:,} ل.س جديدة\n"
+        f"🎟️ لفاتك الحالية: {state.get('current_spins', 0)}",
+        _wheel_bot_keyboard()
     )
 
 
