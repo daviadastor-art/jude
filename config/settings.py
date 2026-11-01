@@ -38,7 +38,7 @@ FORCE_SUBSCRIPTION_INVITE_URL = os.getenv(
 DAILY_REPORT_HOUR = int(os.getenv('DAILY_REPORT_HOUR', '5'))
 DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() == 'true'
 
-# 🆕 حد التنبيه لرصيد الكاشيرة (NSP)
+# 🆕 حد التنبيه لرصيد الكاشيرة (ل.س جديدة)
 AGENT_BALANCE_ALERT_THRESHOLD = int(os.getenv('AGENT_BALANCE_ALERT_THRESHOLD', '100000'))
 
 # Support Handles

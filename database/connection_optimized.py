@@ -281,7 +281,7 @@ class DatabaseManager:
         bot_settings_table = """
         CREATE TABLE IF NOT EXISTS bot_settings (
             id SERIAL PRIMARY KEY,
-            exchange_rate INTEGER DEFAULT 1000,
+            exchange_rate INTEGER DEFAULT 1,
             usd_buy_rate NUMERIC(15, 2) DEFAULT 14000,
             usd_sell_rate NUMERIC(15, 2) DEFAULT 15000,
             withdraw_commission NUMERIC(5, 2) DEFAULT 10,
@@ -319,7 +319,7 @@ class DatabaseManager:
             # إدخال الإعدادات الافتراضية
             cursor.execute("""
                 INSERT INTO bot_settings (id, exchange_rate, usd_buy_rate, usd_sell_rate, withdraw_commission, agent_balance)
-                VALUES (1, 1000, 14000, 15000, 10, 0)
+                VALUES (1, 1, 14000, 15000, 10, 0)
                 ON CONFLICT (id) DO NOTHING;
             """)
             conn.commit()

@@ -184,9 +184,9 @@ async def official_api_watchdog_task(bot: Bot):
                 if admin_balance is not None:
                     if _should_update_agent_balance_cache(admin_balance):
                         await asyncio.to_thread(repo.update_bot_settings, agent_balance=admin_balance)
-                        logger.info(f"🪙 Watchdog: cached agent balance = {admin_balance:,} NSP")
+                        logger.info(f"🪙 Watchdog: cached agent balance = {admin_balance:,} ل.س جديدة")
                     else:
-                        logger.info(f"🪙 Watchdog: agent balance unchanged/skipped DB write = {admin_balance:,} NSP")
+                        logger.info(f"🪙 Watchdog: agent balance unchanged/skipped DB write = {admin_balance:,} ل.س جديدة")
 
             # 🌟 فحص رصيد الكاشيرة فقط إذا حصلنا على قراءة صالحة من iChancy.
             # هذا يمنع إطلاق تنبيه كاذب إذا انتهت الجلسة أو رجع API برد فارغ.
@@ -319,7 +319,7 @@ async def generate_daily_report(bot: Bot):
 
             "🔷 <b>══ الأرصدة ══</b>\n"
             f"├─ 🏛️ رصيد البوت (المستخدمين): <code>{total_bot_balance:,} SYP</code>\n"
-            f"└─ 🕹️ رصيد الكاشيرة: <code>{agent_balance:,} NSP</code>\n\n"
+            f"└─ 🕹️ رصيد الكاشيرة: <code>{agent_balance:,} ل.س جديدة</code>\n\n"
 
             "⏳ <b>══ الطلبات المعلقة ══</b>\n"
             f"├─ 📨 إيداعات معلقة: <code>{pending_deposits.get('count', 0) if pending_deposits else 0}</code>\n"
@@ -364,9 +364,9 @@ async def check_agent_balance_and_alert(bot: Bot):
                 "━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "🚧 <b>تنبيه: رصيد الكاشيرة منخفض!</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🪙 <b>الرصيد الحالي:</b> <code>{agent_balance:,} NSP</code>\n"
-                f"📉 <b>الحد الأدنى:</b> <code>{threshold:,} NSP</code>\n"
-                f"🚧 <b>النقص:</b> <code>{threshold - agent_balance:,} NSP</code>\n\n"
+                f"🪙 <b>الرصيد الحالي:</b> <code>{agent_balance:,} ل.س جديدة</code>\n"
+                f"📉 <b>الحد الأدنى:</b> <code>{threshold:,} ل.س جديدة</code>\n"
+                f"🚧 <b>النقص:</b> <code>{threshold - agent_balance:,} ل.س جديدة</code>\n\n"
                 f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "🔆 <b>الإجراء المطلوب:</b>\n"
@@ -387,7 +387,7 @@ async def check_agent_balance_and_alert(bot: Bot):
             for admin_id in admin_ids:
                 try:
                     await bot.send_message(chat_id=admin_id, text=alert_text, parse_mode="HTML")
-                    logger.warning(f"🚧 Agent balance alert sent to admin {admin_id}: {agent_balance:,} NSP")
+                    logger.warning(f"🚧 Agent balance alert sent to admin {admin_id}: {agent_balance:,} ل.س جديدة")
                 except Exception as e:
                     logger.warning(f"Failed to send agent balance alert to {admin_id}: {e}")
 
@@ -703,7 +703,7 @@ async def check_agent_balance_periodic(bot: Bot):
         elif last_agent_balance_value is not None and current_balance < last_agent_balance_value:
             # تم خصم رصيد (شحن للاعبين)
             decreased_amount = last_agent_balance_value - current_balance
-            logger.info(f"📈 Agent balance decreased: {last_agent_balance_value:,} → {current_balance:,} (-{decreased_amount:,} NSP)")
+            logger.info(f"📈 Agent balance decreased: {last_agent_balance_value:,} → {current_balance:,} (-{decreased_amount:,} ل.س جديدة)")
 
         # تحديث آخر رصيد معروف
         last_agent_balance_value = current_balance
@@ -728,9 +728,9 @@ async def notify_agent_balance_increase(bot: Bot, old_balance: int, new_balance:
             "━━━━━━━━━━━━━━━━━━━━━━━\n"
             "🪙 <b>تم تعبئة رصيد الكاشيرة!</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📈 <b>الرصيد السابق:</b> <code>{old_balance:,} NSP</code>\n"
-            f"⊕ <b>القيمة المضافة:</b> <code>+{added_amount:,} NSP</code>\n"
-            f"🪙 <b>الرصيد الحالي:</b> <code>{new_balance:,} NSP</code>\n\n"
+            f"📈 <b>الرصيد السابق:</b> <code>{old_balance:,} ل.س جديدة</code>\n"
+            f"⊕ <b>القيمة المضافة:</b> <code>+{added_amount:,} ل.س جديدة</code>\n"
+            f"🪙 <b>الرصيد الحالي:</b> <code>{new_balance:,} ل.س جديدة</code>\n\n"
             f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n"
             "✔️ <i>تم تحديث الرصيد بنجاح</i>\n"
@@ -1108,7 +1108,7 @@ def _collect_dashboard_payload_sync():
         'min_deposit_usd': int(bot_settings.get('min_deposit_usd') or 5),
         'min_withdraw_syp': int(bot_settings.get('min_withdraw_syp') or 25000),
         'min_withdraw_usd': int(bot_settings.get('min_withdraw_usd') or 10),
-        'syp_version': str(bot_settings.get('syp_version') or 'old'),
+        'syp_version': 'new',
         'is_ichancy_api_alive': None,  # injected from the watchdog cache
         'pending_deposits': pending_deposits,
         'pending_withdraws': pending_withdraws,
@@ -1250,7 +1250,7 @@ async def admin_settings_get_handler(request):
 
         return web.json_response({
             'agent_balance': agent_bal,
-            'exchange_rate': int(bot_settings.get('exchange_rate') or 1000),
+            'exchange_rate': 1,
             'usd_buy_rate': float(bot_settings.get('usd_buy_rate') or 0),
             'usd_sell_rate': float(bot_settings.get('usd_sell_rate') or 0),
             'withdraw_commission': float(bot_settings.get('withdraw_commission') if bot_settings.get('withdraw_commission') is not None else 0),
@@ -1266,7 +1266,7 @@ async def admin_settings_get_handler(request):
             'min_deposit_usd': int(bot_settings.get('min_deposit_usd') or 5),
             'min_withdraw_syp': int(bot_settings.get('min_withdraw_syp') or 25000),
             'min_withdraw_usd': int(bot_settings.get('min_withdraw_usd') or 10),
-            'syp_version': str(bot_settings.get('syp_version') or 'old'),
+            'syp_version': 'new',
             'referrals_enabled': bool(bot_settings.get('referrals_enabled', True)),
             'agent_balance_alert_threshold': int(bot_settings.get('agent_balance_alert_threshold') or getattr(settings, 'AGENT_BALANCE_ALERT_THRESHOLD', 100000)),
             'payment_addresses': await asyncio.to_thread(repo.get_all_payment_addresses),
@@ -1351,9 +1351,7 @@ async def admin_settings_post_handler(request):
             min_deposit_usd = int(str(payload.get('min_deposit_usd', '')).replace(',', ''))
             min_withdraw_syp = int(str(payload.get('min_withdraw_syp', '')).replace(',', ''))
             min_withdraw_usd = int(str(payload.get('min_withdraw_usd', '')).replace(',', ''))
-            syp_version = str(payload.get('syp_version', 'old')).strip()
-            if syp_version not in ('old', 'new'):
-                syp_version = 'old'
+            syp_version = 'new'
             if min_deposit_syp < 1 or min_deposit_usd < 1 or min_withdraw_syp < 1 or min_withdraw_usd < 1 or game_min_deposit_syp < 1:
                 return web.json_response({'error': 'يجب أن تكون الحدود أرقاماً موجبة'}, status=400)
             await asyncio.to_thread(
@@ -1390,9 +1388,7 @@ async def admin_settings_post_handler(request):
             min_deposit_usd = int(str(payload.get('min_deposit_usd', '')).replace(',', ''))
             min_withdraw_syp = int(str(payload.get('min_withdraw_syp', '')).replace(',', ''))
             min_withdraw_usd = int(str(payload.get('min_withdraw_usd', '')).replace(',', ''))
-            syp_version = str(payload.get('syp_version', 'old')).strip()
-            if syp_version not in ('old', 'new'):
-                syp_version = 'old'
+            syp_version = 'new'
             referrals_enabled_raw = payload.get('referrals_enabled', True)
             referrals_enabled = str(referrals_enabled_raw).lower() in ('1', 'true', 'yes', 'on') if not isinstance(referrals_enabled_raw, bool) else referrals_enabled_raw
             if exchange_rate <= 0 or usd_buy_rate <= 0 or usd_sell_rate <= 0 or withdraw_commission < 0 or game_min_deposit_syp < 1 or agent_revenue_percent < 0 or game_bonus_apply_percent < 0 or game_bonus_apply_percent > 100 or min_deposit_syp < 1 or min_deposit_usd < 1 or min_withdraw_syp < 1 or min_withdraw_usd < 1:

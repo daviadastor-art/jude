@@ -368,7 +368,7 @@ class DatabaseManager:
         bot_settings_table = """
         CREATE TABLE IF NOT EXISTS bot_settings (
             id SERIAL PRIMARY KEY,
-            exchange_rate INTEGER DEFAULT 1000,
+            exchange_rate INTEGER DEFAULT 1,
             usd_buy_rate NUMERIC(15, 2) DEFAULT 14000,
             usd_sell_rate NUMERIC(15, 2) DEFAULT 15000,
             withdraw_commission NUMERIC(5, 2) DEFAULT 10,
@@ -648,7 +648,7 @@ class DatabaseManager:
         alter_settings_min_withdraw_syp = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS min_withdraw_syp BIGINT DEFAULT 25000;"
         alter_settings_min_withdraw_usd = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS min_withdraw_usd INT DEFAULT 10;"
         # 🆕 نسخة الليرة السورية (old = قديمة, new = جديدة ÷100)
-        alter_settings_syp_version = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS syp_version VARCHAR(10) DEFAULT 'old';"
+        alter_settings_syp_version = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS syp_version VARCHAR(10) DEFAULT 'new';"
         alter_settings_alert_threshold = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS agent_balance_alert_threshold BIGINT DEFAULT 100000;"
         alter_settings_active_cashier = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS active_cashier_profile_id INTEGER;"
         alter_settings_maintenance = "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;"
@@ -858,7 +858,7 @@ class DatabaseManager:
 
         insert_default_settings = """
         INSERT INTO bot_settings (id, exchange_rate, usd_buy_rate, usd_sell_rate, withdraw_commission, agent_balance)
-        VALUES (1, 1000, 14000, 15000, 10, 0)
+        VALUES (1, 1, 14000, 15000, 10, 0)
         ON CONFLICT (id) DO NOTHING;
         """
 

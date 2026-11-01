@@ -25,12 +25,9 @@ logger = logging.getLogger(__name__)
 ADMIN_IDS = [item.strip() for item in str(getattr(settings, "ADMIN_IDS", settings.ADMIN_ID)).split(",") if item.strip()]
 
 
-# 🌟 دوال مساعدة لتحويل الليرة القديمة ↔ الجديدة (منسوخة من menu.py للاستخدام المحلي)
-def _syp_old_to_new(amount_old):
-    return amount_old
-
-def _fmt_syp_dual(amount_old):
-    return f"<code>{format_new(amount_old)} ل.س جديدة</code>"
+# 🌟 العملة الموحدة: الليرة السورية الجديدة فقط.
+def _fmt_syp_dual(amount_new):
+    return f"<code>{format_new(amount_new)} ل.س جديدة</code>"
 
 
 def is_admin_user(user_id) -> bool:
@@ -122,7 +119,7 @@ async def user_details_callback(callback: CallbackQuery):
         f"🕹️ <b>اسم iChancy:</b> <code>{details.get('ichancy_username') or 'غير مرتبط'}</code>\n"
         f"🗝️ <b>Player ID:</b> <code>{details.get('player_id') or 'غير متوفر'}</code>\n"
         f"🔷 <b>رصيد البوت:</b> <code>{int(details.get('bot_balance', 0)):,} SYP</code>\n"
-        f"🕹️ <b>رصيد اللعبة:</b> <code>{int(details.get('game_balance', 0)):,} NSP</code>\n"
+        f"🕹️ <b>رصيد اللعبة:</b> <code>{int(details.get('game_balance', 0)):,} ل.س جديدة</code>\n"
         f"📃 <b>وافق على الشروط:</b> {terms}\n\n"
         f"📈 <b>إحصائيات المعاملات:</b>\n"
         f"• الإجمالي: <code>{details['tx_count']}</code>\n"
@@ -275,7 +272,6 @@ def build_admin_dashboard_text(bot_settings, is_ichancy_api_alive, total_bot_bal
     usd_buy_rate = float(bot_settings['usd_buy_rate'])
     usd_sell_rate = float(bot_settings['usd_sell_rate'])
     withdraw_commission = float(bot_settings['withdraw_commission'])
-    exchange_rate = int(bot_settings['exchange_rate'])
 
     dep_pending = [tx for tx in pending if tx['type'] == 'deposit_bot']
     wit_pending = [tx for tx in pending if tx['type'] == 'withdraw_bot']
@@ -288,12 +284,12 @@ def build_admin_dashboard_text(bot_settings, is_ichancy_api_alive, total_bot_bal
 
     text += "🪙 <b>══ الأرصدة المالية ══</b>\n"
     text += f"🔷 <b>رصيد البوت (مستخدمين):</b> <code>{total_bot_balance:,} SYP</code>\n"
-    text += f"🕹️ <b>محفظة الوكيل (iChancy):</b> <code>{agent_balance:,} NSP</code>\n\n"
+    text += f"🕹️ <b>محفظة الوكيل (iChancy):</b> <code>{agent_balance:,} ل.س جديدة</code>\n\n"
 
     text += "💹 <b>══ أسعار الصرف الحالية ══</b>\n"
     text += f"📈 <b>سعر الإيداع (شراء $):</b> <code>{usd_buy_rate:,.2f} ل.س</code>\n"
     text += f"📉 <b>سعر السحب (بيع $):</b> <code>{usd_sell_rate:,.2f} ل.س</code>\n"
-    text += f"🕹️ <b>سعر اللعبة (NSP):</b> <code>1 NSP = {exchange_rate:,} ل.س</code>\n"
+    text += "🕹️ <b>سعر iChancy:</b> <code>1 ل.س جديدة = 1 ل.س جديدة</code>\n"
     text += f"🏷️ <b>عمولة السحب:</b> <code>{withdraw_commission:,.2f}%</code>\n\n"
 
     api_status = "🔹 متصل" if is_ichancy_api_alive else "🔻 غير متصل"
@@ -520,17 +516,17 @@ async def adm_sync_liquidity_callback(callback: CallbackQuery):
         
         # تحديد حالة الأمان
         security_status = "🔹 آمن جداً" if agent_wallet >= game_liquidity else "🔻 عجز في السيولة"
-        risk_note = "" if agent_wallet >= game_liquidity else f"🚧 تحتاج لشحن محفظة الوكيل بمبلغ <code>{game_liquidity - agent_wallet:,} NSP</code> لتغطية كافة الأرصدة."
+        risk_note = "" if agent_wallet >= game_liquidity else f"🚧 تحتاج لشحن محفظة الوكيل بمبلغ <code>{game_liquidity - agent_wallet:,} ل.س جديدة</code> لتغطية كافة الأرصدة."
 
         report_text = (
             "━━━━━━━━━━━━━━━━━━━━━━━\n"
             "📈 <b>تقرير السيولة الشامل</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔷 <b>سيولة البوت (نقد):</b>\n<code>{bot_liquidity:,} SYP</code>\n"
-            f"🕹️ <b>سيولة المنصة (أرصدة لاعبين):</b>\n<code>{game_liquidity:,} NSP</code>\n"
-            f"🏛️ <b>رصيد محفظة الوكيل (احتياطي):</b>\n<code>{agent_wallet:,} NSP</code>\n\n"
+            f"🕹️ <b>سيولة المنصة (أرصدة لاعبين):</b>\n<code>{game_liquidity:,} ل.س جديدة</code>\n"
+            f"🏛️ <b>رصيد محفظة الوكيل (احتياطي):</b>\n<code>{agent_wallet:,} ل.س جديدة</code>\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📉 <b>صافي الالتزامات الإجمالية:</b>\n<code>{net_liabilities:,} SYP/NSP</code>\n"
+            f"📉 <b>صافي الالتزامات الإجمالية:</b>\n<code>{net_liabilities:,} SYP/ل.س جديدة</code>\n"
             f"🛡️ <b>نسبة التغطية:</b> <code>{coverage_ratio:.2f}%</code>\n"
             f"🚩 <b>حالة الأمان:</b> {security_status}\n"
             f"{risk_note}\n"
@@ -1398,13 +1394,12 @@ async def adm_rates_menu_callback(callback: CallbackQuery):
         return
     bot_settings = await asyncio.to_thread(repo.get_bot_settings)
     text = (
-        "💹 <b>تعديل أسعار الصرف الحالية:</b>\n\n"
-        f"1️⃣ <b>سعر صرف نقاط iChancy (NSP):</b><code>1 NSP = {int(bot_settings['exchange_rate']):,} ل.س</code>\n"
+        "💹 <b>إعدادات العملات الحالية:</b>\n\n"
+        "1️⃣ <b>سعر iChancy:</b><code>1 ل.س جديدة = 1 ل.س جديدة</code> (ثابت)\n"
         f"2️⃣ <b>سعر شراء الدولار (عند الإيداع):</b><code>{float(bot_settings['usd_buy_rate']):,.2f} ل.س</code>\n"
         f"3️⃣ <b>سعر بيع الدولار (عند السحب):</b><code>{float(bot_settings['usd_sell_rate']):,.2f} ل.س</code>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [premium_button(text="🖋️ تعديل سعر صرف اللعبة (NSP)", callback_data="edit_rate_game")],
         [
             premium_button(text="🖋️ تعديل سعر الإيداع (شراء)", callback_data="edit_rate_buy"),
             premium_button(text="🖋️ تعديل سعر السحب (بيع)", callback_data="edit_rate_sell")
@@ -1427,9 +1422,8 @@ async def back_to_admin_main_callback(callback: CallbackQuery, state: FSMContext
 async def edit_rate_game_callback(callback: CallbackQuery, state: FSMContext):
     if not await ensure_admin_callback(callback):
         return
-    await safe_edit_text(callback.message, "🖋️ الرجاء إدخال <b>سعر صرف نقاط iChancy (NSP) الجديد بالليرة السورية</b> (أرقام فقط):")
-    await state.set_state(AdminStates.entering_exchange_rate)
-    await safe_answer_callback(callback)
+    await safe_edit_text(callback.message, "ℹ️ سعر iChancy ثابت حالياً: <b>1 ل.س جديدة = 1 ل.س جديدة</b> ولا يحتاج إلى تعديل.", parse_mode="HTML")
+    await safe_answer_callback(callback, "النسبة ثابتة 1=1")
 
 
 @router.message(AdminStates.entering_exchange_rate)
@@ -1442,7 +1436,7 @@ async def process_new_exchange_rate(message: Message, state: FSMContext):
         return
     rate = int(text)
     await asyncio.to_thread(repo.update_bot_settings, exchange_rate=rate)
-    await message.answer(f"✔️ تم تحديث سعر صرف اللعبة بنجاح إلى: <code>{rate:,} ل.س</code> لـ 1 NSP", parse_mode="HTML")
+    await message.answer(f"✔️ تم تحديث سعر صرف اللعبة بنجاح إلى: <code>{rate:,} ل.س</code> لـ 1 ل.س جديدة", parse_mode="HTML")
     await state.clear()
 
 
@@ -1534,7 +1528,7 @@ async def adm_agent_bal_callback(callback: CallbackQuery):
         await safe_edit_text(
             callback.message,
             f"🕹️ <b>رصيد محفظة الوكيل الحالي على iChancy:</b>\n\n"
-            f"🪙 الرصيد الفعلي: <code>{balance:,} NSP</code>\n\n"
+            f"🪙 الرصيد الفعلي: <code>{balance:,} ل.س جديدة</code>\n\n"
             "تأكد دائماً من وجود رصيد كافٍ لتلبية طلبات شحن حسابات اللاعبين الفورية.",
             reply_markup=get_admin_keyboard(),
             parse_mode="HTML"
@@ -2470,7 +2464,7 @@ def _admin_user_profile_text(user):
         f"🕹️ <b>حساب iChancy:</b> <code>{html.escape(str(user.get('ichancy_username') or 'غير مرتبط'))}</code>\n"
         f"🗝️ <b>Player ID:</b> <code>{html.escape(str(user.get('player_id') or 'غير متوفر'))}</code>\n"
         f"🔷 <b>رصيد البوت:</b> <code>{int(user.get('bot_balance') or 0):,} SYP</code>\n"
-        f"🕹️ <b>رصيد اللعبة:</b> <code>{int(user.get('game_balance') or 0):,} NSP</code>\n"
+        f"🕹️ <b>رصيد اللعبة:</b> <code>{int(user.get('game_balance') or 0):,} ل.س جديدة</code>\n"
         f"📃 <b>الشروط:</b> {'نعم ✔️' if user.get('terms_accepted') else 'لا ⛔'}\n"
         f"📅 <b>تاريخ التسجيل:</b> <code>{html.escape(str(user.get('created_at') or '—'))}</code>"
     )

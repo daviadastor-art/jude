@@ -1,41 +1,44 @@
-"""Canonical currency units used by the bot.
+"""عملة البوت الموحدة.
 
-All bot balances and SYP amounts stored in the database are NEW SYP.
-Ichancy still exposes the legacy denomination, so game transfers use the
-explicit conversion helpers below. Never do ad-hoc *100 or /100 elsewhere.
+منذ اعتماد iChancy لليرة السورية الجديدة، كل المبالغ داخل البوت
+وخارجه تستخدم نفس الوحدة: 1 ليرة جديدة = 1 ليرة جديدة.
+الدوال ذات الأسماء القديمة موجودة فقط للتوافق مع السجلات والكود القديم،
+لكنها لا تجري أي تحويل أو قسمة.
 """
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import Decimal
 
 BOT_CURRENCY = "SYP_NEW"
-ICHANCY_CURRENCY = "SYP_OLD"
-ICHANCY_RATE = Decimal("100")  # 1 new SYP = 100 old SYP
+ICHANCY_CURRENCY = "SYP_NEW"
+ICHANCY_RATE = Decimal("1")
 
 
-def old_to_new(amount, *, rounding=ROUND_DOWN) -> Decimal:
-    value = Decimal(str(amount))
-    return (value / ICHANCY_RATE).quantize(Decimal("0.01"), rounding=rounding)
+def old_to_new(amount, *, rounding=None) -> Decimal:
+    """توافق خلفي: لم يعد هناك تحويل، القيمة تعاد كما هي."""
+    return Decimal(str(amount))
 
 
 def new_to_old(amount) -> int:
+    """توافق خلفي: iChancy يستخدم الليرة الجديدة 1=1."""
     value = Decimal(str(amount))
     if value < 0:
         raise ValueError("amount cannot be negative")
-    return int((value * ICHANCY_RATE).to_integral_value(rounding=ROUND_HALF_UP))
+    if value != value.to_integral_value():
+        raise ValueError("amount must be a whole SYP amount")
+    return int(value)
 
 
 def require_new_integer(amount) -> int:
     value = Decimal(str(amount))
     if value != value.to_integral_value() or value <= 0:
-        raise ValueError("amount must be a positive whole new-SYP amount")
+        raise ValueError("amount must be a positive whole SYP amount")
     return int(value)
 
 
 def require_old_multiple_of_rate(amount) -> int:
+    """توافق خلفي: أي مبلغ صحيح موجب مقبول في نظام 1=1."""
     value = Decimal(str(amount))
     if value != value.to_integral_value() or value <= 0:
-        raise ValueError("amount must be a positive whole old-SYP amount")
-    if value % ICHANCY_RATE:
-        raise ValueError("old-SYP amount must be divisible by 100")
+        raise ValueError("amount must be a positive whole SYP amount")
     return int(value)
 
 
@@ -47,4 +50,5 @@ def format_new(amount) -> str:
 
 
 def format_old(amount) -> str:
-    return f"{int(Decimal(str(amount))):,}"
+    """توافق خلفي للعرض؛ يعرض نفس الليرة الجديدة."""
+    return format_new(amount)

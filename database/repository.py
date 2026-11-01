@@ -7,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from psycopg2.extras import Json
 from database.connection import DatabaseManager
-from config.currency import old_to_new
 
 logger = logging.getLogger(__name__)
 
@@ -1042,16 +1041,12 @@ def credit_balance_atomic(telegram_id, amount):
 
 
 def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=None):
-    """تسوية سحب اللعبة مع تحويل NSP القديمة إلى SYP الجديدة.
-
-    ``withdraw_amount`` هو مبلغ iChancy بالليرة القديمة، بينما رصيد البوت
-    مخزّن بالليرة الجديدة. لذلك 20,000 قديمة تُضاف كـ200 جديدة فقط.
-    """
+    """تسوية سحب اللعبة بالليرة السورية الجديدة بنسبة 1=1."""
     conn = cursor = None
     tid = str(telegram_id)
-    game_amount_old = int(float(withdraw_amount or 0))
-    cash_amount_new = int(old_to_new(game_amount_old))
-    if game_amount_old <= 0 or cash_amount_new <= 0:
+    game_amount_new = int(float(withdraw_amount or 0))
+    cash_amount_new = game_amount_new
+    if game_amount_new <= 0:
         return {'ok': False, 'reason': 'invalid_amount'}
     try:
         conn = DatabaseManager.get_connection(); cursor = conn.cursor()
@@ -1063,15 +1058,15 @@ def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=N
             SET bot_balance = COALESCE(bot_balance, 0) + %s,
                 game_balance = GREATEST(COALESCE(game_balance, 0) - %s, 0)
             WHERE telegram_id = %s
-            RETURNING bot_balance, game_balance, game_bonus_amount""", (cash_amount_new, game_amount_old, tid))
+            RETURNING bot_balance, game_balance, game_bonus_amount""", (cash_amount_new, game_amount_new, tid))
         updated = cursor.fetchone()
         if tx_id:
             cursor.execute("""UPDATE transactions SET status='completed', reviewed_at=CURRENT_TIMESTAMP,
                 original_amount=%s, converted_amount_syp=%s,
                 transfer_number=COALESCE(transfer_number,'') || %s WHERE id=%s""",
-                (game_amount_old, cash_amount_new, f' | credited_full_new={cash_amount_new}', int(tx_id)))
+                (game_amount_new, cash_amount_new, f' | credited_full_new={cash_amount_new}', int(tx_id)))
         conn.commit()
-        return {'ok': True, 'withdraw_amount': game_amount_old, 'cash_amount_new': cash_amount_new, 'active_bonus_before': active_bonus,
+        return {'ok': True, 'withdraw_amount': game_amount_new, 'cash_amount_new': cash_amount_new, 'active_bonus_before': active_bonus,
                 'bonus_deducted': 0, 'active_bonus_after': active_bonus,
                 'cash_credited': cash_amount_new, 'old_balance': int(row[0] or 0),
                 'new_balance': int(updated[0] or 0), 'new_game_balance': int(updated[1] or 0),
@@ -1882,7 +1877,7 @@ def get_bot_settings():
         # 🛡️ حماية: ضمان وجود السجل الافتراضي قبل أي استخدام
         DatabaseManager.execute_query(
             "INSERT INTO bot_settings (id, exchange_rate, usd_buy_rate, usd_sell_rate, withdraw_commission, agent_balance, game_min_deposit_syp, agent_revenue_percent, min_deposit_syp, min_deposit_usd, min_withdraw_syp, min_withdraw_usd, syp_version) "
-            "VALUES (1, 1000, 14000, 15000, 10, 0, 20000, 30, 20000, 5, 25000, 10, 'old') ON CONFLICT (id) DO NOTHING;"
+            "VALUES (1, 1, 14000, 15000, 10, 0, 20000, 30, 20000, 5, 25000, 10, 'new') ON CONFLICT (id) DO NOTHING;"
         )
         settings_dict = DatabaseManager.execute_query_dict("SELECT * FROM bot_settings WHERE id = 1", fetch='one')
     
@@ -1911,7 +1906,8 @@ def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=Non
         DatabaseManager.execute_query("INSERT INTO bot_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;")
         settings_dict = get_bot_settings()
 
-    new_exchange_rate = exchange_rate if exchange_rate is not None else settings_dict['exchange_rate']
+    # iChancy يستخدم الليرة الجديدة مباشرة؛ لا يوجد سعر صرف أو نسخة قديمة.
+    new_exchange_rate = 1
     new_usd_buy_rate = usd_buy_rate if usd_buy_rate is not None else settings_dict['usd_buy_rate']
     new_usd_sell_rate = usd_sell_rate if usd_sell_rate is not None else settings_dict['usd_sell_rate']
     new_withdraw_commission = withdraw_commission if withdraw_commission is not None else settings_dict['withdraw_commission']
@@ -1923,7 +1919,7 @@ def update_bot_settings(exchange_rate=None, usd_buy_rate=None, usd_sell_rate=Non
     new_min_deposit_usd = min_deposit_usd if min_deposit_usd is not None else settings_dict.get('min_deposit_usd', 5)
     new_min_withdraw_syp = min_withdraw_syp if min_withdraw_syp is not None else settings_dict.get('min_withdraw_syp', 25000)
     new_min_withdraw_usd = min_withdraw_usd if min_withdraw_usd is not None else settings_dict.get('min_withdraw_usd', 10)
-    new_syp_version = syp_version if syp_version is not None else settings_dict.get('syp_version', 'old')
+    new_syp_version = 'new'
     new_rollover = bonus_rollover_multiplier if bonus_rollover_multiplier is not None else settings_dict.get('bonus_rollover_multiplier', 5.0)
     new_field = turnover_field_name if turnover_field_name is not None else settings_dict.get('turnover_field_name', 'totalBet')
     new_game_bonus_enabled = game_bonus_enabled if game_bonus_enabled is not None else settings_dict.get('game_bonus_enabled', True)

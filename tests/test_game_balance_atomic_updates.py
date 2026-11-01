@@ -84,7 +84,7 @@ class AtomicGameBalanceUpdateTests(unittest.TestCase):
         self.assertEqual(result["game_bonus_amount"], 200)
         user_update, params = cursor.executed[1]
         self.assertIn("GREATEST(COALESCE(game_balance, 0) - %s, 0)", user_update)
-        self.assertEqual(params, (300, 30_000, "user-1"))
+        self.assertEqual(params, (30_000, 30_000, "user-1"))
         self.assertTrue(connection.committed)
 
 

@@ -69,7 +69,6 @@ async def show_main_menu(message: Message, user_id, edit: bool = False, user_rec
     bot_balance = int(user['bot_balance']) if user and user.get('bot_balance') is not None else 0
     # game_balance is already returned in the users row; avoid a second get_user query.
     game_balance = int(user.get('game_balance') or 0) if user else 0
-    bot_balance_new_str = format_new(bot_balance)
     telegram_username = str((user or {}).get('telegram_username') or '').strip()
     ichancy_username = str((user or {}).get('ichancy_username') or '').strip()
     player_id = str((user or {}).get('player_id') or '').strip()
@@ -108,9 +107,9 @@ async def show_main_menu(message: Message, user_id, edit: bool = False, user_rec
         f"⚡️ <b>أهلاً بك في Jude Robert</b> ⚡️\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━</code>\n\n"
         f"💎 <b>رصيد البوت</b>\n"
-        f"<code>{bot_balance:,} ل.س</code>  <i>({bot_balance_new_str} ل.س جديدة)</i>\n\n"
+        f"<code>{bot_balance:,} ل.س جديدة</code>\n\n"
         f"🎮 <b>رصيد اللعبة — iChancy</b>\n"
-        f"<code>{game_balance:,} NSP</code>\n\n"
+        f"<code>{game_balance:,} ل.س جديدة</code>\n\n"
         f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
         f"👤 <b>الحساب:</b> {account_line}\n"
         f"🎮 <b>iChancy ID:</b> <code>{player_line}</code>\n"

@@ -12,7 +12,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import settings
-from config.currency import format_new, format_old, new_to_old, old_to_new, require_new_integer, require_old_multiple_of_rate
+from config.currency import format_new, require_new_integer
 import database.repository as repo
 from database.connection import DatabaseManager
 from ichancy_api.client import ichancy_api_client
@@ -78,19 +78,12 @@ def _get_min_withdraw_usd():
     except:
         return 10
 
-# 🌟 دوال مساعدة لتحويل الليرة القديمة ↔ الجديدة
-def _syp_old_to_new(amount_old):
-    return old_to_new(amount_old)
-
-def _syp_new_to_old(amount_new):
-    return new_to_old(amount_new)
-
 def _get_syp_version():
     try:
         s = repo.get_bot_settings()
-        return str(s.get('syp_version', 'old') or 'old')
+        return 'new'
     except:
-        return 'old'
+        return 'new'
 
 def _fmt_syp_dual(amount_new):
     return f"<code>{format_new(amount_new)} ل.س جديدة</code>"
@@ -98,13 +91,11 @@ def _fmt_syp_dual(amount_new):
 def _fmt_limits_dual(amount_new):
     return _fmt_syp_dual(amount_new)
 
-def _fmt_syp_copy_label(amount_old):
-    ver = _get_syp_version()
-    return f"🗒️ نسخ {format_new(amount_old)} ل.س جديدة"
+def _fmt_syp_copy_label(amount_new):
+    return f"🗒️ نسخ {format_new(amount_new)} ل.س جديدة"
 
-def _get_syp_copy_amount(amount_old):
-    ver = _get_syp_version()
-    return format_new(amount_old)
+def _get_syp_copy_amount(amount_new):
+    return format_new(amount_new)
 
 ADMIN_IDS = [item.strip() for item in str(getattr(settings, "ADMIN_IDS", settings.ADMIN_ID)).split(",") if item.strip()]
 
@@ -607,8 +598,8 @@ async def deposit_to_player_game(
     bot
 ) -> bool:
     """
-    تحويل مبلغ من رصيد البوت (SYP) إلى حساب اللاعب في اللعبة (NSP).
-    النسبة الثابتة: 1 SYP = 1 NSP
+    تحويل مبلغ من رصيد البوت (SYP) إلى حساب اللاعب في اللعبة (ل.س جديدة).
+    النسبة الثابتة: 1 SYP = 1 ل.س جديدة
 
     🔐 آمن ذرياً (Update 3): يخصم المبلغ مسبقاً قبل استدعاء الـ API،
     فلو فشل الـ API يُعاد الرصيد فوراً. مستحيل ضياع/تضاعف المبلغ.
@@ -627,7 +618,7 @@ async def deposit_to_player_game(
 
         username = user.get('telegram_username') or 'Unknown'
 
-        # 🌟 النسبة الثابتة 1 SYP = 1 NSP للمبلغ النقدي، ويُضاف بونص اللعب تلقائياً حسب إعدادات الأدمن
+        # 🌟 النسبة الثابتة 1 SYP = 1 ل.س جديدة للمبلغ النقدي، ويُضاف بونص اللعب تلقائياً حسب إعدادات الأدمن
         cash_amount = int(amount_syp)
         if cash_amount < 1:
             return {'success': False, 'reason': 'invalid_amount'}
@@ -658,9 +649,9 @@ async def deposit_to_player_game(
         checkin_amount = int(reserve.get('checkin_amount') or 0)
         total_to_game = int(reserve.get('total_to_game') or cash_amount)
 
-        # 🔐 الخطوة 2: iChancy يستقبل الوحدات القديمة؛ مبالغ البوت هنا جديدة.
-        api_total_to_game = new_to_old(total_to_game)
-        logger.info(f"📬 Calling API depositToPlayer: player_id={player_id}, cash_new={cash_amount}, total_old={api_total_to_game}")
+        # 🔐 الخطوة 2: iChancy يستخدم الليرة السورية الجديدة بنفس وحدة البوت (1=1).
+        api_total_to_game = total_to_game
+        logger.info(f"📬 Calling API depositToPlayer: player_id={player_id}, amount_new={api_total_to_game}")
         deposit_result = await ichancy_api_client.deposit_to_player(
             player_id=player_id,
             amount=api_total_to_game
@@ -678,7 +669,7 @@ async def deposit_to_player_game(
                     f"🕹️ حساب اللعبة: {player_id}\n"
                     f"🪙 المبلغ النقدي: {cash_amount:,} ل.س جديدة\n"
                     f"🧧 البونص المرفق: {bonus_amount:,} ل.س جديدة\n"
-                    f"🕹️ الإجمالي المطلوب: {total_to_game:,} NSP\n"
+                    f"🕹️ الإجمالي المطلوب: {total_to_game:,} ل.س جديدة\n"
                     f"🚧 السبب: {error_msg}\n"
                     f"📍 المعاملة بقيت pending: <code>#{tx_id}</code>"
                 )
@@ -692,7 +683,7 @@ async def deposit_to_player_game(
                 f"🕹️ حساب اللعبة: {player_id}\n"
                 f"🪙 المبلغ النقدي: {cash_amount:,} ل.س جديدة\n"
                 f"🧧 البونص المرفق: {bonus_amount:,} ل.س جديدة\n"
-                f"🕹️ الإجمالي للعبة: {total_to_game:,} NSP\n"
+                f"🕹️ الإجمالي للعبة: {total_to_game:,} ل.س جديدة\n"
                 f"🔻 الخطأ: {error_msg}\n"
                 f"🔁 تم إعادة الرصيد النقدي والبونص للمستخدم\n"
                 f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -724,7 +715,7 @@ async def deposit_to_player_game(
             f"🕹️ حساب اللعبة: {player_id}\n"
             f"🪙 الشحن النقدي: {cash_amount:,} ل.س جديدة\n"
             f"🧧 بونص اللعب المرفق: {bonus_amount:,} ل.س جديدة\n"
-            f"💹 الإجمالي: {api_total_to_game:,} ل.س قديمة\n"
+            f"💹 الإجمالي: {api_total_to_game:,} ل.س جديدة\n"
             f"🔹 الحالة: مكتمل\n"
             f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -761,8 +752,7 @@ async def withdraw_from_player_game(
     amount_nsp: Decimal,
     bot
 ) -> bool:
-    """سحب مبلغ من حساب اللاعب (ليرة قديمة) إلى رصيد البوت (ليرة جديدة).
-    التحويل: كل 100 ليرة قديمة = 1 ليرة جديدة.
+    """سحب مبلغ من حساب اللاعب بالليرة الجديدة إلى رصيد البوت 1=1.
 
     🔐 آمن ذرياً (Update 3): نسجل المعاملة pending أولاً، ثم نستدعي الـ API،
     ثم نضيف الرصيد فقط عند النجاح. مستحيل ضياع/تضاعف المبلغ.
@@ -784,8 +774,8 @@ async def withdraw_from_player_game(
 
         # 🧧 لا يوجد تدوير الآن: بونص اللعبة النشط يُخصم من مبلغ السحب عند التسوية.
 
-        # iChancy يستخدم الليرة القديمة، ورصيد البوت يخزن الليرة الجديدة.
-        amount_syp = int(old_to_new(amount_nsp))
+        # iChancy ورصيد البوت يستخدمان الليرة السورية الجديدة بنفس الوحدة.
+        amount_syp = int(amount_nsp)
 
         # 🔐 الخطوة 1: تسجيل المعاملة pending كدليل على العملية الجارية
         # (الرصيد لا يُضاف هنا بعد؛ يُضاف فقط عند نجاح الـ API)
@@ -793,7 +783,7 @@ async def withdraw_from_player_game(
             tx_type='withdraw_from_game',
             amount=amount_syp,
             payment_method='game',
-            transfer_number=f'Withdrawing {int(amount_nsp)} NSP from player {player_id}',
+            transfer_number=f'Withdrawing {int(amount_nsp)} ل.س جديدة from player {player_id}',
             status='pending'
         )
 
@@ -815,7 +805,7 @@ async def withdraw_from_player_game(
                 f"⛔ <b>فشل السحب من اللعبة - خطأ API</b>\n\n"
                 f"🧑‍💼 المستخدم: {username} ({user_id})\n"
                 f"🕹️ حساب اللعبة: {player_id}\n"
-                f"🪙 المبلغ: {int(amount_nsp):,} NSP\n"
+                f"🪙 المبلغ: {int(amount_nsp):,} ل.س جديدة\n"
                 f"🔻 الخطأ: {error_msg}\n"
                 f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -834,7 +824,7 @@ async def withdraw_from_player_game(
             f"✔️ <b>سحب ناجح من حساب اللعبة</b>\n\n"
             f"🧑‍💼 المستخدم: {username} ({user_id})\n"
             f"🕹️ حساب اللعبة: {player_id}\n"
-            f"💹 المسحوب من اللعبة: {int(amount_nsp):,} NSP\n"
+            f"💹 المسحوب من اللعبة: {int(amount_nsp):,} ل.س جديدة\n"
             f"🔷 المبلغ الكامل المضاف لرصيد البوت: {cash_credited:,} ل.س جديدة\n"
             f"🔹 الحالة: مكتمل\n"
             f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -847,7 +837,7 @@ async def withdraw_from_player_game(
         log_text = (
             f"🚧 <b>خطأ استثناء في سحب اللعبة</b>\n\n"
             f"🧑‍💼 المستخدم ID: {user_id}\n"
-            f"🪙 المبلغ: {amount_nsp:,} NSP\n"
+            f"🪙 المبلغ: {amount_nsp:,} ل.س جديدة\n"
             f"⛔ الخطأ: {str(e)}\n"
             f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -1080,7 +1070,7 @@ async def back_to_main_menu_callback(callback: CallbackQuery, state: FSMContext)
     balance_text = (
         f"🔷 <b>رصيد البوت:</b><code>{format_new(bot_balance)} ل.س جديدة</code>\n"
         f"{affiliate_line}"
-        f"🕹️ <b>رصيد اللعبة (iChancy):</b><code>{game_balance:,} NSP</code>\n\n"
+        f"🕹️ <b>رصيد iChancy:</b><code>{game_balance:,} ل.س جديدة</code>\n\n"
         " <i>اختر الخدمة المطلوبة:</i>"
     )
 
@@ -1118,7 +1108,7 @@ async def ichancy_menu_callback(callback: CallbackQuery):
             f"📨 <b>الإيميل:</b><code>{user['ichancy_email']}</code>\n"
             f"🔐 <b>كلمة المرور:</b><code>{user['ichancy_password']}</code>\n"
             f"🔖 <b>معرف اللاعب (Player ID):</b><code>{player_id}</code>\n\n"
-            f"🪙 <b>رصيد اللعبة الفعلي:</b><code>{display_balance:,} NSP</code>"
+            f"🪙 <b>رصيد iChancy الفعلي:</b><code>{display_balance:,} ل.س جديدة</code>"
         )
         await callback.message.edit_text(status_text, reply_markup=get_ichancy_submenu(has_account=True), parse_mode="HTML")
     else:
@@ -1233,7 +1223,7 @@ async def process_ichancy_password(message: Message, state: FSMContext):
                 f"📨 Email: <code>{email}</code>\n"
                 f"🕹️ Player ID: <code>{player_id}</code>\n"
                 f"🔷 رصيد البوت: <code>{int(stored_user.get('bot_balance') or 0):,} ل.س جديدة</code>\n"
-                f"🧿 رصيد اللعبة: <code>{int(stored_user.get('game_balance') or 0):,} NSP</code>"
+                f"🧿 رصيد اللعبة: <code>{int(stored_user.get('game_balance') or 0):,} ل.س جديدة</code>"
             )
         else:
             await message.answer(
@@ -3180,7 +3170,7 @@ async def prediction_select_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data == "deposit_game_acc")
 async def deposit_game_acc_callback(callback: CallbackQuery, state: FSMContext):
-    """شحن حساب اللعبة: تحويل رصيد البوت (SYP) إلى رصيد اللعبة (NSP) — فوري."""
+    """شحن حساب اللعبة: تحويل رصيد البوت (SYP) إلى رصيد اللعبة (ل.س جديدة) — فوري."""
     if not await _ensure_service_gate(callback.message, callback.from_user.id, 'game', edit=True):
         await safe_answer_callback(callback)
         return
@@ -3222,8 +3212,8 @@ async def deposit_game_acc_callback(callback: CallbackQuery, state: FSMContext):
     text = (
         f"📨 <b>شحن حساب اللعبة (iChancy)</b>\n\n"
         f"🔷 <b>رصيدك في البوت:</b> <code>{bot_balance:,} ل.س جديدة</code>\n"
-        f"🕹️ <b>رصيد اللعبة المسجل:</b> <code>{cached_game_balance:,} NSP</code>\n"
-        f"💹 <b>التحويل:</b> <code>1 ل.س جديدة = 100 ل.س قديمة</code>\n"
+        f"🕹️ <b>رصيد اللعبة المسجل:</b> <code>{cached_game_balance:,} ل.س جديدة</code>\n"
+        f"💹 <b>التحويل:</b> <code>1 ل.س جديدة = 1 ل.س جديدة</code>\n"
         f"🚧 <b>الحد الأدنى للشحن:</b> <code>{format_new(game_min_deposit)} ل.س جديدة</code>\n\n"
         f"📈 <b>أقصى مبلغ يمكنك شحنه الآن:</b> <code>{format_new(bot_balance)} ل.س جديدة</code>\n\n"
         f"اكتب المبلغ الذي تريد تحويله <b>بالليرة السورية الجديدة</b> ↘️\n"
@@ -3260,8 +3250,8 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
         await message.answer(f"⛔ رصيدك لا يكفي. رصيدك الحالي: {int(safe_balance(user)):,} ل.س جديدة. أعد الإدخال:")
         return
 
-    # المبلغ داخل البوت جديد؛ Ichancy يستقبل القديم.
-    amount_nsp = new_to_old(amount_syp)
+    # الليرة الجديدة هي الوحدة الوحيدة داخل البوت وiChancy (1=1).
+    amount_nsp = amount_syp
     bonus_to_apply = await asyncio.to_thread(repo.calculate_game_bonus_for_deposit, amount_syp)
     cashback_pending = int(user.get('cashback_pending_balance') or 0)
     checkin_pending = int(user.get('checkin_pending_balance') or 0)
@@ -3269,7 +3259,7 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.update_data(
         game_deposit_syp=amount_syp,
-        game_deposit_nsp=new_to_old(total_new),
+        game_deposit_nsp=total_new,
         game_deposit_cash_nsp=amount_syp,
         game_deposit_bonus=bonus_to_apply,
         game_deposit_cashback=cashback_pending,
@@ -3279,16 +3269,16 @@ async def process_game_deposit_amount(message: Message, state: FSMContext):
 
     bonus_line = ""
     if bonus_to_apply > 0:
-        bonus_line = f"🧧 بونص الشحن: <code>{format_old(new_to_old(bonus_to_apply))} ل.س قديمة</code> — رصيد طبيعي كامل\n"
+        bonus_line = f"🧧 بونص الشحن: <code>{format_new(bonus_to_apply)} ل.س جديدة</code> — رصيد طبيعي كامل\n"
     else:
         bonus_line = "🧧 لا يوجد بونص شحن مفعّل حالياً.\n"
 
     confirm_text = (
         f"🗒️ <b>تأكيد شحن حساب اللعبة</b>\n\n"
-        f"💹 شحن من رصيدك: <code>{format_new(amount_syp)} ل.س جديدة</code> → <code>{format_old(amount_nsp)} ل.س قديمة</code>\n"
+        f"💹 شحن من رصيدك: <code>{format_new(amount_syp)} ل.س جديدة</code> → <code>{format_new(amount_nsp)} ل.س جديدة</code>\n"
         f"{bonus_line}"
-        f"🕹️ الإجمالي الذي سيصل للعبة: <code>{format_old(new_to_old(total_new))} ل.س قديمة</code>\n"
-        f"📈 التحويل: 1 ل.س جديدة = 100 ل.س قديمة\n"
+        f"🕹️ الإجمالي الذي سيصل للعبة: <code>{format_new(total_new)} ل.س جديدة</code>\n"
+        f"📈 التحويل: 1 ل.س جديدة = 1 ل.س جديدة\n"
         f"🔷 رصيدك النقدي بعد العملية: <code>{int(safe_balance(user)) - amount_syp:,} ل.س جديدة</code>\n"
         f"💰 المبلغ المدفوع من رصيد البوت: <code>{amount_syp:,} ل.س جديدة</code>\n\n"
         f"✅ <b>البونص يصل كرصد طبيعي كامل ويمكن سحبه من اللعبة دون خصم.</b>"
@@ -3340,16 +3330,16 @@ async def confirm_game_deposit_callback(callback: CallbackQuery, state: FSMConte
         cash_amount = int(result.get('cash_amount') or amount_syp) if isinstance(result, dict) else int(amount_syp)
         bonus_amount = int(result.get('bonus_amount') or 0) if isinstance(result, dict) else 0
         total_to_game = int(result.get('total_to_game') or data['game_deposit_nsp']) if isinstance(result, dict) else int(data['game_deposit_nsp'])
-        bonus_success_line = f"🧧 بونص اللعب المرفق: <code>{bonus_amount:,} NSP</code>\n" if bonus_amount > 0 else ""
+        bonus_success_line = f"🧧 بونص اللعب المرفق: <code>{bonus_amount:,} ل.س جديدة</code>\n" if bonus_amount > 0 else ""
         await safe_edit_text(
             callback.message,
             f"✔️ <b>تم شحن حساب اللعبة بنجاح!</b>\n\n"
-            f"💹 من رصيدك: <code>{cash_amount:,} ل.س</code> → <code>{cash_amount:,} NSP</code>\n"
+            f"💹 من رصيدك: <code>{cash_amount:,} ل.س جديدة</code> → <code>{cash_amount:,} ل.س جديدة</code>\n"
             f"{bonus_success_line}"
-            f"🕹️ الإجمالي الذي وصل للعبة: <code>{total_to_game:,} NSP</code>\n"
+            f"🕹️ الإجمالي الذي وصل إلى iChancy: <code>{total_to_game:,} ل.س جديدة</code>\n"
             f"🔷 رصيد البوت الآن: {_fmt_syp_dual(safe_balance(user))}\n"
             f"🧧 بونص اللعب النشط داخل اللعبة: <code>{int(user.get('game_bonus_amount') or 0):,} ل.س جديدة</code>\n"
-            f"🕹️ رصيد اللعبة المسجل: <code>{new_game:,} NSP</code>\n\n"
+            f"🕹️ رصيد iChancy المسجل: <code>{new_game:,} ل.س جديدة</code>\n\n"
             f"🏡 يمكنك العودة للقائمة الرئيسية من الأسفل.",
             reply_markup=get_user_menu_keyboard(callback.from_user.id),
             parse_mode="HTML"
@@ -3379,7 +3369,7 @@ async def confirm_game_deposit_callback(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "withdraw_game_acc")
 async def withdraw_game_acc_callback(callback: CallbackQuery, state: FSMContext):
-    """سحب من حساب اللعبة: تحويل رصيد اللعبة (NSP) إلى رصيد البوت (SYP) — فوري."""
+    """سحب من حساب iChancy بالليرة الجديدة إلى رصيد البوت بنسبة 1=1."""
     if not await _ensure_service_gate(callback.message, callback.from_user.id, 'game', edit=True):
         await safe_answer_callback(callback)
         return
@@ -3407,7 +3397,7 @@ async def withdraw_game_acc_callback(callback: CallbackQuery, state: FSMContext)
     if game_balance <= 0:
         await safe_edit_text(
             callback.message,
-            f"⛔ <b>لا يوجد رصيد في حساب اللعبة حالياً.</b>\n\nرصيدك في اللعبة: <code>{game_balance:,} NSP</code>\n"
+            f"⛔ <b>لا يوجد رصيد في حساب iChancy حالياً.</b>\n\nرصيدك في iChancy: <code>{game_balance:,} ل.س جديدة</code>\n"
             "توجّه إلى اللعبة وحقق بعض النقاط، ثم عُد لسحبها إلى البوت.",
             reply_markup=get_user_menu_keyboard(callback.from_user.id),
             parse_mode="HTML"
@@ -3420,12 +3410,12 @@ async def withdraw_game_acc_callback(callback: CallbackQuery, state: FSMContext)
 
     text = (
         f"📬 <b>سحب من حساب اللعبة (iChancy)</b>\n\n"
-        f"🕹️ <b>رصيدك الفعلي في اللعبة:</b> <code>{game_balance:,} NSP</code>\n"
+        f"🕹️ <b>رصيدك الفعلي في iChancy:</b> <code>{game_balance:,} ل.س جديدة</code>\n"
         f"{bonus_info_line}"
         f"🔷 <b>رصيدك في البوت:</b> <code>{int(safe_balance(user)):,} ل.س جديدة</code>\n"
-        f"💹 <b>التحويل:</b> <code>100 ل.س قديمة = 1 ل.س جديدة</code>\n\n"
+        f"💹 <b>التحويل:</b> <code>1 ل.س جديدة = 1 ل.س جديدة</code>\n\n"
         f"📈 <b>الصافي إذا سحبت كامل الرصيد:</b> <code>{net_if_full:,} ل.س جديدة</code>\n\n"
-        f"اكتب المبلغ الذي تريد سحبه <b>بنقاط اللعبة (NSP)</b> ↘️"
+        f"اكتب المبلغ الذي تريد سحبه <b>بالليرة السورية الجديدة</b> ↘️"
     )
     await safe_edit_text(callback.message, text, parse_mode="HTML")
     await state.set_state(BotStates.entering_game_withdraw_amount)
@@ -3439,7 +3429,7 @@ async def process_game_withdraw_amount(message: Message, state: FSMContext):
         if amount_nsp <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("⛔ الرجاء إدخال مبلغ رقمي صحيح (بنقاط NSP):")
+        await message.answer("⛔ الرجاء إدخال مبلغ رقمي صحيح بالليرة السورية الجديدة:")
         return
 
     telegram_id = str(message.from_user.id)
@@ -3449,16 +3439,11 @@ async def process_game_withdraw_amount(message: Message, state: FSMContext):
     game_balance = int(data.get('game_withdraw_balance') or await asyncio.to_thread(repo.get_user_game_balance, telegram_id))
 
     if amount_nsp > game_balance:
-        await message.answer(f"⛔ رصيدك في اللعبة لا يكفي. رصيدك الفعلي: <code>{game_balance:,} NSP</code>. أعد الإدخال:", parse_mode="HTML")
+        await message.answer(f"⛔ رصيدك في iChancy لا يكفي. رصيدك الفعلي: <code>{game_balance:,} ل.س جديدة</code>. أعد الإدخال:", parse_mode="HTML")
         return
 
-    # user enters old Ichancy SYP; bot is credited in new SYP
-    try:
-        require_old_multiple_of_rate(amount_nsp)
-        amount_syp = int(old_to_new(amount_nsp))
-    except ValueError:
-        await message.answer("⛔ يجب أن يكون المبلغ بالليرة القديمة من مضاعفات 100 (مثال: 25000).")
-        return
+    # المستخدم يدخل الليرة الجديدة، ورصيد البوت يُضاف بنفس القيمة (1=1).
+    amount_syp = amount_nsp
     bonus_deducted = 0
     cash_to_credit = amount_syp
     await state.update_data(
@@ -3473,10 +3458,10 @@ async def process_game_withdraw_amount(message: Message, state: FSMContext):
 
     confirm_text = (
         f"🗒️ <b>تأكيد السحب من حساب اللعبة</b>\n\n"
-        f"💹 سيتم سحب: <code>{amount_nsp:,} NSP</code> من حساب اللعبة\n"
+        f"💹 سيتم سحب: <code>{amount_nsp:,} ل.س جديدة</code> من حساب iChancy\n"
         f"{bonus_line}"
         f"🔷 المبلغ الكامل الذي سيضاف لرصيد البوت: <code>{format_new(cash_to_credit)} ل.س جديدة</code>\n"
-        f"📈 التحويل: 100 ل.س قديمة = 1 ل.س جديدة\n"
+        f"📈 التحويل: 1 ل.س جديدة = 1 ل.س جديدة\n"
         f"🔷 رصيد البوت بعد العملية: <code>{format_new(int(safe_balance(user)) + cash_to_credit)} ل.س جديدة</code>\n\n"
         f"✅ <b>كل الرصيد داخل اللعبة طبيعي وقابل للسحب بالكامل.</b>"
     )
@@ -3530,11 +3515,11 @@ async def confirm_game_withdraw_callback(callback: CallbackQuery, state: FSMCont
         await safe_edit_text(
             callback.message,
             f"✔️ <b>تم سحب رصيد اللعبة بنجاح!</b>\n\n"
-            f"💹 تم سحب: <code>{int(amount_nsp):,} NSP</code> من اللعبة\n"
+            f"💹 تم سحب: <code>{int(amount_nsp):,} ل.س جديدة</code> من iChancy\n"
             f"{bonus_line}"
             f"🔷 الصافي المضاف لرصيد البوت: <code>{format_new(cash_credited)} ل.س جديدة</code>\n"
             f"🔷 رصيد البوت الآن: {_fmt_syp_dual(safe_balance(user))}\n"
-            f"🕹️ رصيد اللعبة المسجل: <code>{new_game:,} NSP</code>\n\n"
+            f"🕹️ رصيد iChancy المسجل: <code>{new_game:,} ل.س جديدة</code>\n\n"
             f"🏡 يمكنك العودة للقائمة الرئيسية من الأسفل.",
             reply_markup=get_user_menu_keyboard(callback.from_user.id),
             parse_mode="HTML"
