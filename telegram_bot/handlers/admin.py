@@ -192,6 +192,9 @@ class AdminStates(StatesGroup):
 
 
 def get_admin_keyboard():
+    gates = repo.get_service_gates()
+    deposits_open = bool(gates.get('deposits_enabled', True) and gates.get('game_transfers_enabled', True))
+    deposit_toggle_label = "⛔ إيقاف إيداعات البوت وiChancy" if deposits_open else "✅ تفعيل إيداعات البوت وiChancy"
     keyboard = [
         [premium_button(text="✨ لوحة التحكم الرئيسية", callback_data="caesar_control_panel")],
         [
@@ -203,6 +206,7 @@ def get_admin_keyboard():
         [premium_button(text="🏷️ نسبة عمولة السحب", callback_data="adm_comm_menu")],
         [premium_button(text="🕹️ رصيد محفظة الوكيل الفعلي", callback_data="adm_agent_bal")],
         [premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses")],
+        [premium_button(text=deposit_toggle_label, callback_data="adm_toggle_all_deposits")],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
         [premium_button(text="🎡 عجلة الحظ", callback_data="adm_wheel_menu")],
@@ -219,6 +223,9 @@ def get_admin_keyboard():
 def get_admin_dashboard_keyboard(refresh_callback="caesar_control_panel"):
     webapp_url = f"{getattr(settings, 'RENDER_EXTERNAL_URL', 'https://ichancy100.onrender.com')}/dashboard?v=admin-campaigns-v9-20260716"
     from aiogram.types import WebAppInfo
+    gates = repo.get_service_gates()
+    deposits_open = bool(gates.get('deposits_enabled', True) and gates.get('game_transfers_enabled', True))
+    deposit_toggle_label = "⛔ إيقاف إيداعات البوت وiChancy" if deposits_open else "✅ تفعيل إيداعات البوت وiChancy"
     return InlineKeyboardMarkup(inline_keyboard=[
         [premium_button(text="📈 فتح لوحة التحكم المتقدمة", web_app=WebAppInfo(url=webapp_url))],
         [
@@ -230,6 +237,7 @@ def get_admin_dashboard_keyboard(refresh_callback="caesar_control_panel"):
             premium_button(text="💳 عناوين الإيداع", callback_data="adm_payment_addresses"),
             premium_button(text="📈 تحديث السيولة", callback_data="adm_sync_liquidity")
         ],
+        [premium_button(text=deposit_toggle_label, callback_data="adm_toggle_all_deposits")],
         [premium_button(text="📣 إرسال رسالة للمستخدمين", callback_data="adm_broadcast")],
         [premium_button(text="🗄️ نسخ احتياطي", callback_data="adm_backup_menu")],
         [premium_button(text="🎡 عجلة الحظ", callback_data="adm_wheel_menu")],
@@ -451,6 +459,54 @@ async def caesar_control_panel(callback: CallbackQuery):
     keyboard.inline_keyboard.append([premium_button(text="💳 توزيع الكاش باك الأسبوعي", callback_data="adm_trigger_cashback")])
     await safe_edit_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
     await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "adm_toggle_all_deposits")
+async def adm_toggle_all_deposits_callback(callback: CallbackQuery):
+    """مفتاح طوارئ واحد لإيقاف/تفعيل إيداعات البوت وتحويلات iChancy معاً."""
+    if not await ensure_admin_callback(callback):
+        return
+
+    gates = await asyncio.to_thread(repo.get_service_gates)
+    currently_open = bool(
+        gates.get('deposits_enabled', True)
+        and gates.get('game_transfers_enabled', True)
+    )
+    new_enabled = not currently_open
+    updated = await asyncio.to_thread(
+        repo.update_service_gates,
+        deposits_enabled=new_enabled,
+        game_transfers_enabled=new_enabled,
+    )
+
+    if new_enabled:
+        status_text = (
+            "✅ <b>تم تفعيل الإيداعات</b>\n\n"
+            "تم فتح إيداعات رصيد البوت وتحويلات الشحن إلى iChancy."
+        )
+        alert = "تم تفعيل إيداعات البوت وiChancy"
+    else:
+        status_text = (
+            "⛔ <b>تم إيقاف الإيداعات بالكامل</b>\n\n"
+            "تم إيقاف إنشاء إيداعات رصيد البوت وشحن حسابات iChancy للمستخدمين الجدد.\n"
+            "طلبات السحب والطلبات المعلّقة لا تتأثر بهذا المفتاح."
+        )
+        alert = "تم إيقاف إيداعات البوت وiChancy"
+
+    logger.info(
+        "Admin %s changed all deposit gates: enabled=%s result=%s",
+        callback.from_user.id,
+        new_enabled,
+        updated,
+    )
+    await safe_answer_callback(callback, alert, show_alert=True)
+    await callback.message.answer(
+        status_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [premium_button(text="↩️ لوحة الأدمن", callback_data="caesar_control_panel")]
+        ]),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "adm_trigger_cashback")
