@@ -103,6 +103,7 @@ class IChancyClient:
     # Official Agent API integration
     # ------------------------------------------------------------------
     OFFICIAL_API_PREFIX = "/global/api/UserApi"
+    OFFICIAL_CURRENCY_CODE = "NPS"
 
     @staticmethod
     def _response_json(response, operation="iChancy API"):
@@ -522,12 +523,12 @@ class IChancyClient:
             if not isinstance(wallet, dict):
                 continue
             currency = str(wallet.get("currencyCode") or wallet.get("currency") or "").upper()
-            if currency and currency != "NSP":
+            if currency and currency != self.OFFICIAL_CURRENCY_CODE:
                 continue
             balance = self._extract_balance_from_result(wallet)
             if balance is not None:
                 return int(balance)
-        logger.warning("Official agent-wallet response did not contain an NSP balance.")
+        logger.warning("Official agent-wallet response did not contain an NPS balance.")
         return None
 
     def _get_agent_transaction_list(self, from_date, to_date, limit=1000, start=0, is_to_me=False, affiliate_id=None):
@@ -543,8 +544,8 @@ class IChancyClient:
             "filter": {
                 "currency": {
                     "action": "=",
-                    "valueLabel": "NSP",
-                    "value": "NSP"
+                    "valueLabel": self.OFFICIAL_CURRENCY_CODE,
+                    "value": self.OFFICIAL_CURRENCY_CODE
                 },
                 "date": {
                     "action": "between",
@@ -588,10 +589,10 @@ class IChancyClient:
         return int(balance)
 
     def _transfer_money(self, player_id, amount, comment=None):
-        official_payload = {"amount": amount, "comment": comment or "", "playerId": str(player_id), "currencyCode": "NSP", "currency": "NSP", "moneyStatus": 5}
+        official_payload = {"amount": amount, "comment": comment or "", "playerId": str(player_id), "currencyCode": self.OFFICIAL_CURRENCY_CODE, "currency": self.OFFICIAL_CURRENCY_CODE, "moneyStatus": 5}
         official = self._official_request("/global/api/UserApi/depositToPlayer", official_payload, "official depositToPlayer")
         if isinstance(official, dict) and official.get("result") and official.get("status") is not False:
-            logger.info("Official API transferred +%s NSP to Player: %s", amount, player_id)
+            logger.info("Official API transferred +%s NPS to Player: %s", amount, player_id)
             return True
         logger.error(
             "Official deposit failed: %s",
@@ -600,10 +601,10 @@ class IChancyClient:
         return False
 
     def _withdraw_money(self, player_id, amount, comment=None):
-        official_payload = {"amount": -abs(amount), "comment": comment or "", "playerId": str(player_id), "currencyCode": "NSP", "currency": "NSP", "moneyStatus": 5}
+        official_payload = {"amount": -abs(amount), "comment": comment or "", "playerId": str(player_id), "currencyCode": self.OFFICIAL_CURRENCY_CODE, "currency": self.OFFICIAL_CURRENCY_CODE, "moneyStatus": 5}
         official = self._official_request("/global/api/UserApi/withdrawFromPlayer", official_payload, "official withdrawFromPlayer")
         if isinstance(official, dict) and official.get("result") and official.get("status") is not False:
-            logger.info("Official API withdrew -%s NSP from Player: %s", amount, player_id)
+            logger.info("Official API withdrew -%s NPS from Player: %s", amount, player_id)
             return True
         logger.error(
             "Official withdrawal failed: %s",

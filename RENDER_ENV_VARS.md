@@ -45,7 +45,7 @@
 |---|---|---|
 | `DAILY_REPORT_HOUR` | ساعة التقرير (UTC) | `5` |
 | `DAILY_REPORT_ENABLED` | تفعيل التقرير اليومي | `true` |
-| `AGENT_BALANCE_ALERT_THRESHOLD` | حد تنبيه رصيد الكاشيرة (NSP) | `100000` |
+| `AGENT_BALANCE_ALERT_THRESHOLD` | حد تنبيه رصيد الكاشيرة (NPS) | `100000` |
 
 ### الإعدادات العامة
 | المتغير | الوصف | الافتراضي |
