@@ -110,7 +110,7 @@ class OfficialApiAuthenticationTests(unittest.TestCase):
             "status": True,
             "result": [
                 {"currencyCode": "USD", "balance": 9},
-                {"currencyCode": "NSP", "balance": 12345},
+                {"currencyCode": "NPS", "balance": 12345},
             ],
         })
 
@@ -119,6 +119,56 @@ class OfficialApiAuthenticationTests(unittest.TestCase):
             "/global/api/UserApi/getAgentAllWallets",
             {},
             "official getAgentAllWallets",
+        )
+
+    def test_deposit_uses_nps_currency_and_documented_payload(self):
+        client = client_with_mock_session()
+        client._official_request = Mock(return_value={"status": True, "result": {"balance": 200}})
+
+        self.assertTrue(client._transfer_money("123", 200, "test deposit"))
+
+        client._official_request.assert_called_once_with(
+            "/global/api/UserApi/depositToPlayer",
+            {
+                "amount": 200,
+                "comment": "test deposit",
+                "playerId": "123",
+                "currencyCode": "NPS",
+                "currency": "NPS",
+                "moneyStatus": 5,
+            },
+            "official depositToPlayer",
+        )
+
+    def test_withdraw_uses_nps_currency_and_negative_amount(self):
+        client = client_with_mock_session()
+        client._official_request = Mock(return_value={"status": True, "result": {"balance": 0}})
+
+        self.assertTrue(client._withdraw_money("123", 200, "test withdrawal"))
+
+        client._official_request.assert_called_once_with(
+            "/global/api/UserApi/withdrawFromPlayer",
+            {
+                "amount": -200,
+                "comment": "test withdrawal",
+                "playerId": "123",
+                "currencyCode": "NPS",
+                "currency": "NPS",
+                "moneyStatus": 5,
+            },
+            "official withdrawFromPlayer",
+        )
+
+    def test_agent_transaction_report_filters_nps_currency(self):
+        client = client_with_mock_session()
+        client._official_request = Mock(return_value={"status": True, "result": {"records": []}})
+
+        client._get_agent_transaction_list("2026-11-01", "2026-11-02", affiliate_id="2854983")
+
+        payload = client._official_request.call_args.args[1]
+        self.assertEqual(
+            payload["filter"]["currency"],
+            {"action": "=", "valueLabel": "NPS", "value": "NPS"},
         )
 
     def test_player_search_uses_documented_exact_username_filter(self):
