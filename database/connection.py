@@ -816,15 +816,16 @@ class DatabaseManager:
         ]
         # Retire only the legacy built-in sectors once; preserve user-created prizes and edits.
         retire_legacy_wheel_defaults = "UPDATE wheel_prizes SET is_active = FALSE WHERE config_key IS NULL;"
+        migrate_random_code_prize = "UPDATE wheel_prizes SET config_key='random_code_syp_500', prize_value=500, label='كود هدية نقدي بقيمة 500 ل.س جديدة' WHERE config_key='random_code_usd';"
         seed_requested_wheel_prizes = """
         INSERT INTO wheel_prizes (prize_type, prize_value, weight, label, created_by, config_key)
         VALUES
           ('loss_cashback', 7, 15, 'استرداد 7% من خسائر اللعبة (مرة واحدة)', 'system', 'loss_cashback_7'),
-          ('code', 5, 1, 'كود عشوائي بقيمة 5–200$ (فرصة 1%)', 'system', 'random_code_usd'),
+          ('code', 500, 1, 'كود هدية نقدي بقيمة 500 ل.س جديدة', 'system', 'random_code_syp_500'),
           ('loss_cashback', 5, 16, 'استرداد 5% من خسائر اللعبة (مرة واحدة)', 'system', 'loss_cashback_5'),
           ('bot_balance_percent', 5, 20, 'زيادة فورية 5% من رصيد البوت', 'system', 'bot_balance_5'),
           ('first_deposit_bonus', 5, 2, 'بونص 5% لأول شحن + عمولة سحب 5% لأول سحب', 'system', 'first_deposit_5'),
-          ('cash', 200, 5, 'هدية فورية 200 ليرة سورية جديدة', 'system', 'cash_gift_200'),
+            ('cash', 200, 5, 'هدية فورية 200 ليرة سورية جديدة', 'system', 'cash_gift_200'),
           ('nothing', 0, 41, 'حظ أوفر بالمرة القادمة', 'system', 'nothing_41')
         ON CONFLICT (config_key) WHERE config_key IS NOT NULL DO NOTHING;
         """
@@ -836,6 +837,7 @@ class DatabaseManager:
             "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_value NUMERIC(15, 2) DEFAULT 0;",
             "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_label VARCHAR(180);",
             "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS is_win BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS reward_code VARCHAR(100);",
         ]
 
         # 🆕 (Update 15) إعدادات العجلة
@@ -974,6 +976,7 @@ class DatabaseManager:
             alter_wheel_prize_key,
             wheel_prize_key_unique,
             retire_legacy_wheel_defaults,
+            migrate_random_code_prize,
             seed_requested_wheel_prizes,
             wheel_reward_claims_table,
             *alter_users_wheel_rewards,

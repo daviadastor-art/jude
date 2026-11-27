@@ -4423,9 +4423,9 @@ def get_wheel_user_state(telegram_id, include_history=True):
         prizes = [{'id': int(r[0]), 'type': r[1], 'value': float(r[2] or 0), 'weight': float(r[3] or 0), 'label': r[4], 'config_key': r[5]} for r in raw_prizes if not (r[1] in ('loss_cashback','first_deposit_bonus') and r[5] in claimed_types)]
         history = []
         if include_history:
-            cursor.execute("""SELECT id, spin_source, prize_type, prize_value, prize_label, created_at
+            cursor.execute("""SELECT id, spin_source, prize_type, prize_value, prize_label, created_at, reward_code
                               FROM wheel_spins WHERE telegram_id = %s ORDER BY created_at DESC LIMIT 15""", (str(telegram_id),))
-            history = [{'id': int(r[0]), 'source': r[1], 'type': r[2], 'value': float(r[3] or 0), 'label': r[4] or '—', 'created_at': r[5].isoformat() if r[5] else None} for r in cursor.fetchall()]
+            history = [{'id': int(r[0]), 'source': r[1], 'type': r[2], 'value': float(r[3] or 0), 'label': r[4] or '—', 'created_at': r[5].isoformat() if r[5] else None, 'reward_code': r[6]} for r in cursor.fetchall()]
         conn.commit()
         return {'paid_spins': int(wallet[0] or 0), 'free_spins': int(wallet[1] or 0),
                 'current_spins': int(wallet[0] or 0) + int(wallet[1] or 0), 'luck_boost': float(wallet[2] or 0),
@@ -4505,6 +4505,7 @@ def spin_wheel_wallet_atomic(telegram_id):
         free, paid = (free - 1, paid) if free > 0 else (free, paid - 1)
         ptype, value = prize['type'], int(prize['value'])
         amount = 0
+        gift_code = None
         if ptype == 'cash' and value > 0:
             cursor.execute("UPDATE users SET bot_balance = COALESCE(bot_balance, 0) + %s WHERE telegram_id = %s", (value, str(telegram_id)))
         elif ptype == 'bonus_percent' and value > 0:
@@ -4531,8 +4532,13 @@ def spin_wheel_wallet_atomic(telegram_id):
             amount = int(balance * value / 100)
             if amount:
                 cursor.execute("UPDATE users SET bot_balance=bot_balance+%s WHERE telegram_id=%s", (amount, str(telegram_id)))
-        elif ptype == 'code':
-            value = 0
+        elif ptype == 'code' and value > 0:
+            gift_code = f"JUDE-CASH-{secrets.token_hex(4).upper()}"
+            cursor.execute(
+                "INSERT INTO gifts (sender_telegram_id, receiver_telegram_id, code, amount, is_redeemed) VALUES (%s,%s,%s,%s,FALSE)",
+                (f"WHEEL:{telegram_id}", str(telegram_id), gift_code, value)
+            )
+            amount = value
         elif ptype in ('free_spin', 'retry'):
             free += max(value, 1)
         elif ptype == 'luck':
@@ -4543,20 +4549,21 @@ def spin_wheel_wallet_atomic(telegram_id):
                           total_spins = total_spins + 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s""",
                        (paid, free, luck if ptype == 'luck' else 0, str(telegram_id)))
         cursor.execute("""INSERT INTO wheel_spins (telegram_id, deposit_tx_id, segment_index, reward_percent, reward_amount,
-                          spin_source, prize_id, prize_type, prize_value, prize_label, is_win)
-                       VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                       (str(telegram_id), prize['id'], value if ptype == 'bonus_percent' else 0, value if ptype == 'cash' else 0,
-                        source, prize['id'], ptype, value, prize['label'], ptype != 'nothing'))
+                          spin_source, prize_id, prize_type, prize_value, prize_label, is_win, reward_code)
+                       VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                       (str(telegram_id), prize['id'], value if ptype == 'bonus_percent' else 0, value if ptype in ('cash','code') else 0,
+                        source, prize['id'], ptype, value, prize['label'], ptype != 'nothing', gift_code if ptype == 'code' else None))
         spin_id = int(cursor.fetchone()[0])
         if ptype in ('loss_cashback','first_deposit_bonus'):
             cursor.execute("UPDATE wheel_reward_claims SET spin_id=%s, amount=%s WHERE telegram_id=%s AND prize_type=%s", (spin_id, amount, str(telegram_id), prize['config_key']))
             cursor.execute("UPDATE users SET wheel_cashback_pending_spin_id=%s WHERE telegram_id=%s AND wheel_cashback_pending_percent > 0", (spin_id, str(telegram_id)))
-        if ptype in ('bot_balance_percent','cash','loss_cashback'):
+        if ptype in ('bot_balance_percent','cash','loss_cashback','code'):
             cursor.execute("UPDATE wheel_spins SET reward_amount=%s WHERE id=%s", (amount, spin_id))
         conn.commit()
         return {'ok': True, 'spin_id': spin_id, 'source': source, 'prize_id': prize['id'], 'prize_type': ptype,
                 'prize_value': value, 'reward_amount': amount, 'label': prize['label'], 'current_spins': paid + free,
-                'paid_spins': paid, 'free_spins': free, 'luck_boost': luck if ptype == 'luck' else 0}
+                'paid_spins': paid, 'free_spins': free, 'luck_boost': luck if ptype == 'luck' else 0,
+                'gift_code': gift_code if ptype == 'code' else None}
     except Exception as exc:
         if conn: conn.rollback()
         logger.error(f"spin_wheel_wallet_atomic error: {exc}", exc_info=True)
