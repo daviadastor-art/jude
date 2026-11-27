@@ -665,6 +665,27 @@ def cancel_oxapay_transaction_atomic(tx_id, telegram_id):
             DatabaseManager.put_connection(conn)
 
 
+def get_user_wheel_withdraw_commission(telegram_id, default_percent=0):
+    row = DatabaseManager.execute_query(
+        "SELECT wheel_first_withdraw_commission_percent, wheel_first_withdraw_commission_used FROM users WHERE telegram_id = %s",
+        (str(telegram_id),), fetch='one')
+    if row and float(row[0] or 0) > 0 and not bool(row[1]):
+        return float(row[0])
+    return float(default_percent or 0)
+
+
+def has_user_wheel_first_withdraw_commission(telegram_id):
+    row = DatabaseManager.execute_query("SELECT wheel_first_withdraw_commission_percent, wheel_first_withdraw_commission_used FROM users WHERE telegram_id=%s", (str(telegram_id),), fetch='one')
+    return bool(row and float(row[0] or 0) > 0 and not bool(row[1]))
+
+
+def consume_user_wheel_withdraw_commission(telegram_id):
+    """Consume the one-time prize commission only after a withdrawal is approved."""
+    return DatabaseManager.execute_query(
+        "UPDATE users SET wheel_first_withdraw_commission_used = TRUE WHERE telegram_id = %s AND wheel_first_withdraw_commission_used = FALSE AND wheel_first_withdraw_commission_percent > 0",
+        (str(telegram_id),))
+
+
 def create_withdraw_transaction_atomic(telegram_id, amount, payment_method=None, transfer_number=None):
     """إنشاء طلب سحب مع خصم الرصيد بشكل ذري وآمن.
 
@@ -1040,6 +1061,39 @@ def credit_balance_atomic(telegram_id, amount):
             DatabaseManager.put_connection(conn)
 
 
+def _wheel_lifetime_realized_loss(cursor, telegram_id, game_balance):
+    cursor.execute("""SELECT
+        COALESCE(SUM(CASE WHEN type='deposit_to_game' AND status IN ('completed','approved') THEN COALESCE(original_amount, amount) ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN type='withdraw_from_game' AND status IN ('completed','approved') THEN COALESCE(converted_amount_syp, amount) ELSE 0 END),0)
+        FROM transactions WHERE user_telegram_id=%s""", (str(telegram_id),))
+    deposits, withdrawals = cursor.fetchone() or (0, 0)
+    return max(0, int(float(deposits or 0)) - int(float(withdrawals or 0)) - int(game_balance or 0))
+
+
+def apply_pending_wheel_cashback(cursor, telegram_id, game_balance):
+    cursor.execute("SELECT wheel_cashback_pending_percent, wheel_cashback_pending_spin_id FROM users WHERE telegram_id=%s FOR UPDATE", (str(telegram_id),))
+    row = cursor.fetchone()
+    if not row or float(row[0] or 0) <= 0:
+        return 0
+    loss = _wheel_lifetime_realized_loss(cursor, telegram_id, game_balance)
+    amount = int(loss * float(row[0]) / 100)
+    if amount <= 0:
+        return 0
+    cursor.execute("UPDATE users SET bot_balance=COALESCE(bot_balance,0)+%s,wheel_cashback_pending_percent=0,wheel_cashback_pending_spin_id=NULL WHERE telegram_id=%s", (amount, str(telegram_id)))
+    cursor.execute("SELECT prize_type, spin_id FROM wheel_reward_claims WHERE telegram_id=%s AND prize_type LIKE 'loss_cashback_%%' AND amount=0", (str(telegram_id),))
+    claims = cursor.fetchall()
+    for prize_key, spin_id in claims:
+        try:
+            pct = float(str(prize_key).rsplit('_', 1)[1])
+        except (ValueError, IndexError):
+            continue
+        reward = int(loss * pct / 100)
+        cursor.execute("UPDATE wheel_reward_claims SET amount=%s WHERE telegram_id=%s AND prize_type=%s", (reward, str(telegram_id), prize_key))
+        if spin_id:
+            cursor.execute("UPDATE wheel_spins SET reward_amount=%s WHERE id=%s", (reward, int(spin_id)))
+    return amount
+
+
 def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=None):
     """تسوية سحب اللعبة بالليرة السورية الجديدة بنسبة 1=1."""
     conn = cursor = None
@@ -1065,12 +1119,13 @@ def settle_game_withdraw_with_active_bonus(telegram_id, withdraw_amount, tx_id=N
                 original_amount=%s, converted_amount_syp=%s,
                 transfer_number=COALESCE(transfer_number,'') || %s WHERE id=%s""",
                 (game_amount_new, cash_amount_new, f' | credited_full_new={cash_amount_new}', int(tx_id)))
+        cashback_paid = apply_pending_wheel_cashback(cursor, tid, int(updated[1] or 0))
         conn.commit()
         return {'ok': True, 'withdraw_amount': game_amount_new, 'cash_amount_new': cash_amount_new, 'active_bonus_before': active_bonus,
                 'bonus_deducted': 0, 'active_bonus_after': active_bonus,
                 'cash_credited': cash_amount_new, 'old_balance': int(row[0] or 0),
                 'new_balance': int(updated[0] or 0), 'new_game_balance': int(updated[1] or 0),
-                'game_bonus_amount': int(updated[2] or 0)}
+                'game_bonus_amount': int(updated[2] or 0), 'wheel_cashback_paid': cashback_paid}
     except Exception as e:
         if conn: conn.rollback()
         logger.error(f"settle_game_with_active_bonus error: {e}")
@@ -2480,11 +2535,13 @@ def calculate_best_deposit_bonus(amount_syp, payment_method, telegram_id=None):
             )
             wheel_percent = float(wheel_row[0] or 0) if wheel_row else 0
             wheel_bonus = int(amount * wheel_percent / 100.0) if wheel_percent > 0 else 0
-            if wheel_bonus > best['bonus_amount']:
+            if wheel_bonus > 0:
+                combined_bonus = int(best['bonus_amount']) + wheel_bonus
+                prior_title = (best.get('rule') or {}).get('title')
                 best = {
-                    'bonus_amount': wheel_bonus,
-                    'rule': {'title': f'جائزة عجلة الحظ {wheel_percent:g}%', 'percent': wheel_percent, 'is_wheel': True},
-                    'total_amount': int(amount) + wheel_bonus,
+                    'bonus_amount': combined_bonus,
+                    'rule': {'title': (f'{prior_title} + ' if prior_title else '') + f'جائزة عجلة الحظ {wheel_percent:g}%', 'percent': wheel_percent, 'is_wheel': True},
+                    'total_amount': int(amount) + combined_bonus,
                     'wheel_bonus_percent': wheel_percent,
                 }
         except Exception as e:
@@ -4359,8 +4416,11 @@ def get_wheel_user_state(telegram_id, include_history=True):
         wheel_enabled = bool((cursor.fetchone() or (True,))[0])
         cursor.execute("SELECT paid_spins, free_spins, luck_boost, total_spins FROM wheel_wallets WHERE telegram_id = %s", (str(telegram_id),))
         wallet = cursor.fetchone() or (0, 0, 0, 0)
-        cursor.execute("SELECT id, prize_type, prize_value, weight, label FROM wheel_prizes WHERE is_active = TRUE ORDER BY id")
-        prizes = [{'id': int(r[0]), 'type': r[1], 'value': float(r[2] or 0), 'weight': float(r[3] or 0), 'label': r[4]} for r in cursor.fetchall()]
+        cursor.execute("SELECT id, prize_type, prize_value, weight, label, config_key FROM wheel_prizes WHERE is_active = TRUE ORDER BY id")
+        raw_prizes = cursor.fetchall()
+        cursor.execute("SELECT prize_type FROM wheel_reward_claims WHERE telegram_id=%s", (str(telegram_id),))
+        claimed_types = {r[0] for r in cursor.fetchall()}
+        prizes = [{'id': int(r[0]), 'type': r[1], 'value': float(r[2] or 0), 'weight': float(r[3] or 0), 'label': r[4], 'config_key': r[5]} for r in raw_prizes if not (r[1] in ('loss_cashback','first_deposit_bonus') and r[5] in claimed_types)]
         history = []
         if include_history:
             cursor.execute("""SELECT id, spin_source, prize_type, prize_value, prize_label, created_at
@@ -4431,20 +4491,48 @@ def spin_wheel_wallet_atomic(telegram_id):
         paid, free, luck = int(wallet[0] or 0), int(wallet[1] or 0), float(wallet[2] or 0)
         if paid + free <= 0:
             conn.rollback(); return {'ok': False, 'reason': 'no_spins'}
-        cursor.execute("SELECT id, prize_type, prize_value, weight, label FROM wheel_prizes WHERE is_active = TRUE AND weight > 0 ORDER BY id")
+        cursor.execute("SELECT id, prize_type, prize_value, weight, label, config_key FROM wheel_prizes WHERE is_active = TRUE AND weight > 0 ORDER BY id")
         rows = cursor.fetchall()
+        cursor.execute("SELECT prize_type FROM wheel_reward_claims WHERE telegram_id=%s", (str(telegram_id),))
+        claimed = {r[0] for r in cursor.fetchall()}
+        rows = [r for r in rows if not (r[1] in ('loss_cashback','first_deposit_bonus') and r[5] in claimed)]
         if not rows:
             conn.rollback(); return {'ok': False, 'reason': 'no_prizes'}
-        prizes = [{'id': int(r[0]), 'type': r[1], 'value': float(r[2] or 0), 'weight': float(r[3] or 0), 'label': r[4]} for r in rows]
+        prizes = [{'id': int(r[0]), 'type': r[1], 'value': float(r[2] or 0), 'weight': float(r[3] or 0), 'label': r[4], 'config_key': r[5]} for r in rows]
         weights = [p['weight'] * (1 + luck / 100.0) if p['type'] != 'nothing' else p['weight'] for p in prizes]
         prize = random.choices(prizes, weights=weights, k=1)[0]
         source = 'free' if free > 0 else 'paid'
         free, paid = (free - 1, paid) if free > 0 else (free, paid - 1)
         ptype, value = prize['type'], int(prize['value'])
+        amount = 0
         if ptype == 'cash' and value > 0:
             cursor.execute("UPDATE users SET bot_balance = COALESCE(bot_balance, 0) + %s WHERE telegram_id = %s", (value, str(telegram_id)))
         elif ptype == 'bonus_percent' and value > 0:
             cursor.execute("UPDATE users SET wheel_bonus_percent = GREATEST(COALESCE(wheel_bonus_percent, 0), %s) WHERE telegram_id = %s", (value, str(telegram_id)))
+        elif ptype == 'first_deposit_bonus' and value > 0:
+            cursor.execute("INSERT INTO wheel_reward_claims (telegram_id, prize_type) VALUES (%s,%s) ON CONFLICT DO NOTHING", (str(telegram_id), prize['config_key']))
+            cursor.execute("UPDATE users SET wheel_bonus_percent = GREATEST(COALESCE(wheel_bonus_percent, 0), %s), wheel_first_withdraw_commission_percent = %s, wheel_first_withdraw_commission_used = FALSE WHERE telegram_id = %s", (value, value, str(telegram_id)))
+        elif ptype == 'loss_cashback' and value > 0:
+            claim_key = prize['config_key']
+            cursor.execute("""INSERT INTO wheel_reward_claims (telegram_id, prize_type, spin_id)
+                VALUES (%s,%s,NULL) ON CONFLICT DO NOTHING RETURNING telegram_id""", (str(telegram_id), claim_key))
+            # Each cashback percentage is a separate one-time entitlement.
+            cursor.execute("SELECT COALESCE(SUM(CASE WHEN type='deposit_to_game' AND status IN ('completed','approved') THEN COALESCE(original_amount,amount) ELSE 0 END),0), COALESCE(SUM(CASE WHEN type='withdraw_from_game' AND status IN ('completed','approved') THEN COALESCE(converted_amount_syp,amount) ELSE 0 END),0), COALESCE((SELECT game_balance FROM users WHERE telegram_id=%s),0) FROM transactions WHERE user_telegram_id=%s", (str(telegram_id), str(telegram_id)))
+            dep, wd, game_bal = cursor.fetchone()
+            realized_loss = max(0, int(float(dep or 0))-int(float(wd or 0))-int(game_bal or 0))
+            amount = int(realized_loss * value / 100)
+            if amount:
+                cursor.execute("UPDATE users SET bot_balance=COALESCE(bot_balance,0)+%s WHERE telegram_id=%s", (amount, str(telegram_id)))
+            else:
+                cursor.execute("UPDATE users SET wheel_cashback_pending_percent=COALESCE(wheel_cashback_pending_percent,0)+%s WHERE telegram_id=%s", (value, str(telegram_id)))
+        elif ptype == 'bot_balance_percent' and value > 0:
+            cursor.execute("SELECT COALESCE(bot_balance,0) FROM users WHERE telegram_id=%s FOR UPDATE", (str(telegram_id),))
+            balance = int((cursor.fetchone() or (0,))[0] or 0)
+            amount = int(balance * value / 100)
+            if amount:
+                cursor.execute("UPDATE users SET bot_balance=bot_balance+%s WHERE telegram_id=%s", (amount, str(telegram_id)))
+        elif ptype == 'code':
+            value = 0
         elif ptype in ('free_spin', 'retry'):
             free += max(value, 1)
         elif ptype == 'luck':
@@ -4460,9 +4548,14 @@ def spin_wheel_wallet_atomic(telegram_id):
                        (str(telegram_id), prize['id'], value if ptype == 'bonus_percent' else 0, value if ptype == 'cash' else 0,
                         source, prize['id'], ptype, value, prize['label'], ptype != 'nothing'))
         spin_id = int(cursor.fetchone()[0])
+        if ptype in ('loss_cashback','first_deposit_bonus'):
+            cursor.execute("UPDATE wheel_reward_claims SET spin_id=%s, amount=%s WHERE telegram_id=%s AND prize_type=%s", (spin_id, amount, str(telegram_id), prize['config_key']))
+            cursor.execute("UPDATE users SET wheel_cashback_pending_spin_id=%s WHERE telegram_id=%s AND wheel_cashback_pending_percent > 0", (spin_id, str(telegram_id)))
+        if ptype in ('bot_balance_percent','cash','loss_cashback'):
+            cursor.execute("UPDATE wheel_spins SET reward_amount=%s WHERE id=%s", (amount, spin_id))
         conn.commit()
         return {'ok': True, 'spin_id': spin_id, 'source': source, 'prize_id': prize['id'], 'prize_type': ptype,
-                'prize_value': value, 'label': prize['label'], 'current_spins': paid + free,
+                'prize_value': value, 'reward_amount': amount, 'label': prize['label'], 'current_spins': paid + free,
                 'paid_spins': paid, 'free_spins': free, 'luck_boost': luck if ptype == 'luck' else 0}
     except Exception as exc:
         if conn: conn.rollback()
@@ -4474,7 +4567,7 @@ def spin_wheel_wallet_atomic(telegram_id):
 
 
 def create_wheel_prize(prize_type, prize_value, weight, label, created_by=None):
-    allowed = {'cash', 'bonus_percent', 'free_spin', 'retry', 'luck', 'nothing'}
+    allowed = {'cash', 'bonus_percent', 'free_spin', 'retry', 'luck', 'nothing', 'loss_cashback', 'code', 'bot_balance_percent', 'first_deposit_bonus'}
     if prize_type not in allowed or float(weight) <= 0 or float(prize_value) < 0:
         return None
     row = DatabaseManager.execute_query("""INSERT INTO wheel_prizes (prize_type, prize_value, weight, label, created_by)
@@ -4490,6 +4583,20 @@ def list_wheel_prizes(include_inactive=True):
 
 def disable_wheel_prize(prize_id):
     return DatabaseManager.execute_query("UPDATE wheel_prizes SET is_active = FALSE WHERE id = %s", (int(prize_id),))
+
+
+def update_wheel_prize(prize_id, label=None, prize_value=None, weight=None, is_active=None):
+    if weight is not None and float(weight) < 0:
+        return False
+    if prize_value is not None and float(prize_value) < 0:
+        return False
+    row = DatabaseManager.execute_query("""UPDATE wheel_prizes SET
+        label=COALESCE(%s,label), prize_value=COALESCE(%s,prize_value),
+        weight=COALESCE(%s,weight), is_active=COALESCE(%s,is_active)
+        WHERE id=%s RETURNING id""", (str(label)[:180] if label is not None else None,
+        float(prize_value) if prize_value is not None else None,
+        float(weight) if weight is not None else None, is_active, int(prize_id)), fetch='one')
+    return bool(row)
 
 
 def get_wheel_history(limit=50):

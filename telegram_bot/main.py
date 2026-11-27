@@ -3453,6 +3453,8 @@ async def admin_features_get_handler(request):
         settings['wheel_enabled'] = wheel_settings.get('wheel_enabled', True)
         settings['wheel_segments'] = wheel_settings.get('segments', [])
         wheel_stats = await asyncio.to_thread(repo.get_wheel_stats)
+        wheel_prizes = await asyncio.to_thread(repo.list_wheel_prizes, True)
+        settings['wheel_prizes'] = [{k: p.get(k) for k in ('id','config_key','prize_type','label','is_active')} | {'prize_value': float(p.get('prize_value') or 0), 'weight': float(p.get('weight') or 0)} for p in wheel_prizes]
 
         # 🌟 (Update 16) إعدادات VIP
         vip_settings = await asyncio.to_thread(repo.get_vip_settings)
@@ -3570,6 +3572,20 @@ async def admin_features_post_handler(request):
                     return web.json_response({'error': 'قيم الاحتمالات غير صالحة'}, status=400)
             await asyncio.to_thread(repo.update_wheel_settings, wheel_enabled=wheel_enabled, segments=segments)
             return web.json_response({'ok': True})
+
+        if action == 'update_wheel_prize':
+            prize_id = int(payload.get('id') or 0)
+            if prize_id <= 0:
+                return web.json_response({'error': 'معرّف الجائزة غير صالح'}, status=400)
+            weight = float(payload['weight']) if payload.get('weight') is not None else None
+            value = float(payload['prize_value']) if payload.get('prize_value') is not None else None
+            if weight is not None and (weight < 0 or weight > 100):
+                return web.json_response({'error': 'الاحتمال يجب أن يكون بين 0 و100'}, status=400)
+            if value is not None and value < 0:
+                return web.json_response({'error': 'قيمة الجائزة غير صالحة'}, status=400)
+            active = parse_bool(payload.get('is_active'))
+            ok = await asyncio.to_thread(repo.update_wheel_prize, prize_id, payload.get('label'), value, weight, active)
+            return web.json_response({'ok': bool(ok)})
 
         if action == 'update_vip':
             vip_enabled = parse_bool(payload.get('vip_enabled'))

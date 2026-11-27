@@ -2293,6 +2293,8 @@ async def process_withdraw_amount(message: Message, state: FSMContext):
     bot_settings = await asyncio.to_thread(repo.get_bot_settings)
     usd_sell_rate = float(bot_settings['usd_sell_rate'])
     withdraw_commission = float(bot_settings['withdraw_commission'])
+    wheel_commission_active = await asyncio.to_thread(repo.has_user_wheel_first_withdraw_commission, message.from_user.id)
+    withdraw_commission = await asyncio.to_thread(repo.get_user_wheel_withdraw_commission, message.from_user.id, withdraw_commission)
 
     if entered_syp > safe_balance(user):
         await message.answer(f"⛔ رصيدك غير كافٍ! رصيدك الحالي: <code>{safe_balance(user):,} ل.س جديدة</code>. أعد إدخال المبلغ:", parse_mode="HTML")
@@ -2338,7 +2340,8 @@ async def process_withdraw_amount(message: Message, state: FSMContext):
         currency_label=currency_label,
         commission_label=commission_label,
         net_label=net_label,
-        gross_label=gross_label
+        gross_label=gross_label,
+        wheel_commission_percent=withdraw_commission if wheel_commission_active else 0
     )
 
     confirm_msg = (
@@ -2405,7 +2408,7 @@ async def confirm_withdraw_callback(callback: CallbackQuery, state: FSMContext):
     atomic_result = await asyncio.to_thread(repo.create_withdraw_transaction_atomic, telegram_id=telegram_id,
         amount=entered_syp,
         payment_method=gateway,
-        transfer_number=f"Code: {short_tx_code} | Recipient: {recipient}"
+        transfer_number=f"Code: {short_tx_code} | Recipient: {recipient}" + (f" | WheelCommission={float(data.get('wheel_commission_percent') or 0):g}%" if float(data.get('wheel_commission_percent') or 0) > 0 else '')
     )
 
     if not atomic_result.get('success'):

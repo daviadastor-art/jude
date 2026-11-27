@@ -796,6 +796,39 @@ class DatabaseManager:
         """
 
         alter_users_wheel_bonus = "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_bonus_percent NUMERIC(7, 2) DEFAULT 0;"
+        wheel_reward_claims_table = """
+        CREATE TABLE IF NOT EXISTS wheel_reward_claims (
+            telegram_id VARCHAR(50) NOT NULL,
+            prize_type VARCHAR(40) NOT NULL,
+            spin_id BIGINT,
+            amount BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (telegram_id, prize_type)
+        );
+        """
+        alter_wheel_prize_key = "ALTER TABLE wheel_prizes ADD COLUMN IF NOT EXISTS config_key VARCHAR(60);"
+        wheel_prize_key_unique = "CREATE UNIQUE INDEX IF NOT EXISTS idx_wheel_prizes_config_key ON wheel_prizes(config_key) WHERE config_key IS NOT NULL;"
+        alter_users_wheel_rewards = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_cashback_pending_percent NUMERIC(7,2) NOT NULL DEFAULT 0;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_cashback_pending_spin_id BIGINT;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_first_withdraw_commission_percent NUMERIC(7,2) NOT NULL DEFAULT 0;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS wheel_first_withdraw_commission_used BOOLEAN NOT NULL DEFAULT FALSE;",
+        ]
+        # Retire only the legacy built-in sectors once; preserve user-created prizes and edits.
+        retire_legacy_wheel_defaults = "UPDATE wheel_prizes SET is_active = FALSE WHERE config_key IS NULL;"
+        seed_requested_wheel_prizes = """
+        INSERT INTO wheel_prizes (prize_type, prize_value, weight, label, created_by, config_key)
+        VALUES
+          ('loss_cashback', 7, 15, 'استرداد 7% من خسائر اللعبة (مرة واحدة)', 'system', 'loss_cashback_7'),
+          ('code', 5, 1, 'كود عشوائي بقيمة 5–200$ (فرصة 1%)', 'system', 'random_code_usd'),
+          ('loss_cashback', 5, 16, 'استرداد 5% من خسائر اللعبة (مرة واحدة)', 'system', 'loss_cashback_5'),
+          ('bot_balance_percent', 5, 20, 'زيادة فورية 5% من رصيد البوت', 'system', 'bot_balance_5'),
+          ('first_deposit_bonus', 5, 2, 'بونص 5% لأول شحن + عمولة سحب 5% لأول سحب', 'system', 'first_deposit_5'),
+          ('cash', 200, 5, 'هدية فورية 200 ليرة سورية جديدة', 'system', 'cash_gift_200'),
+          ('nothing', 0, 41, 'حظ أوفر بالمرة القادمة', 'system', 'nothing_41')
+        ON CONFLICT (config_key) WHERE config_key IS NOT NULL DO NOTHING;
+        """
+
         alter_wheel_spins_columns = [
             "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS spin_source VARCHAR(30) DEFAULT 'legacy_deposit';",
             "ALTER TABLE wheel_spins ADD COLUMN IF NOT EXISTS prize_id INTEGER;",
@@ -938,6 +971,12 @@ class DatabaseManager:
             alter_settings_lb_last_settled,
             wheel_spins_table,
             wheel_prizes_table,
+            alter_wheel_prize_key,
+            wheel_prize_key_unique,
+            retire_legacy_wheel_defaults,
+            seed_requested_wheel_prizes,
+            wheel_reward_claims_table,
+            *alter_users_wheel_rewards,
             wheel_wallets_table,
             wheel_loss_rewards_table,
             insert_default_wheel_prizes,

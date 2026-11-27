@@ -1042,6 +1042,8 @@ async def approve_withdraw_callback(callback: CallbackQuery):
 
     # العمليات السريعة (قاعدة البيانات)
     await asyncio.to_thread(repo.update_transaction_status, tx_id, 'approved', reviewed_by=callback.from_user.id)
+    if 'WheelCommission=' in str(tx.get('transfer_number') or ''):
+        await asyncio.to_thread(repo.consume_user_wheel_withdraw_commission, tx.get('user_telegram_id'))
 
     # تحديث رسالة قناة السحب مع إبقاء كل التفاصيل المالية، بدل اختصارها بسطر واحد.
     original_text = getattr(callback.message, 'html_text', None) or getattr(callback.message, 'caption', None) or ''

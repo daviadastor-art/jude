@@ -1284,22 +1284,17 @@ function renderFeatures(d){
         </div>
       </div>
       <div class="card">
-        <div class="card-title">🛠️ قطاعات العجلة (8)</div>
-        <div class="warn-box">الخانات ثابتة: PINGO - 0% - 1% - 2% - 0% - 3% - 4% - 0%. يمكنك تعديل ثقل/احتمال كل خانة فقط، ويمكن جعل أي وزن 0 لتعطيلها.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-          ${wheelSeg.map((seg,i)=>{
-            const pct=Number(seg[0]||0),prob=Number(seg[1]??1),rawLabel=seg[2]||String(pct)+'%';
-            const isPingo=String(rawLabel).toUpperCase()==='PINGO';
-            const label=isPingo?'🧿 PINGO':(pct===0?'🫶 0% حظ أوفر':'+'+pct+'%');
-            const color=isPingo?'var(--gold)':pct===0?'var(--hint)':pct>=4?'var(--green)':'var(--blue)';
-            return `<div style="background:${isPingo?'rgba(255,215,0,0.10)':'rgba(255,255,255,0.03)'};border-radius:10px;padding:10px;border-right:3px solid ${color}">
-              <div style="font-size:12px;font-weight:900;color:${color};margin-bottom:6px">قطاع ${i+1}: ${label}</div>
-              <div class="hint" style="margin-bottom:6px">قيمة الخانة ثابتة ولا تعدّل من هنا</div>
-              <div class="field" style="margin:4px 0 0"><label style="font-size:10px">الثقل / احتمال الظهور</label><input id="wseg_${i}_prob" inputmode="decimal" value="${prob}" style="padding:8px;font-size:13px"></div>
-            </div>`;
-          }).join('')}
+        <div class="card-title">🎁 الجوائز والاحتمالات الفعلية للعجلة</div>
+        <div class="warn-box">الأوزان الافتراضية 100%: 15% استرداد 7%، 16% استرداد 5%، 20% زيادة من رصيد البوت، 2% بونص أول شحن، 5% هدية 200 ليرة، 1% كود، و41% حظ أوفر. الأوزان تُطبّع تلقائياً عند اختيار الجائزة.</div>
+        <div style="display:grid;gap:10px;margin-top:10px">
+          ${(s.wheel_prizes||[]).map(p=>`<div style="background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:end">
+            <div class="field" style="margin:0"><label>${escapeHtml(p.config_key||p.prize_type)} — ${escapeHtml(p.prize_type)}</label><input id="wp_${p.id}_label" value="${escapeHtml(p.label||'')}" maxlength="180"></div>
+            <div class="field" style="margin:0"><label>الاحتمال %</label><input id="wp_${p.id}_weight" type="number" min="0" max="100" step="0.1" value="${Number(p.weight||0)}"></div>
+            <div class="field" style="margin:0"><label>قيمة / نسبة الجائزة</label><input id="wp_${p.id}_value" type="number" min="0" step="0.1" value="${Number(p.prize_value||0)}"></div>
+            <label style="font-size:12px"><input id="wp_${p.id}_active" type="checkbox" ${p.is_active?'checked':''}> مفعّلة</label>
+            <button class="btn gold" style="grid-column:1/-1" onclick="saveWheelPrize(${p.id})">حفظ الجائزة</button>
+          </div>`).join('')||'<div class="hint">لا توجد جوائز مسجلة.</div>'}
         </div>
-        <button class="btn gold" onclick="saveWheel()">💿 حفظ قطاعات العجلة</button>
       </div>`;
   } else if(currentFeatureSubTab === 'flash') {
     subContent = `
@@ -1418,6 +1413,12 @@ async function saveVIP(){
 }
 async function toggleCashback(en){try{await apiPost(FEATURES_API,{action:"update_cashback",cashback_enabled:en});setNotice("✔️ تم التحديث");loadFeatures();}catch(e){setNotice("⛔ "+e.message,"error")}}
 async function saveCashback(){const pct=parseFloat(document.getElementById("cb_pct").value)||0;const minLoss=parseInt(document.getElementById("cb_min").value)||0;try{await apiPost(FEATURES_API,{action:"update_cashback",cashback_pct:pct,cashback_min_loss:minLoss});setNotice("✔️ تم حفظ إعدادات الكاش باك");loadFeatures();}catch(e){setNotice("⛔ "+e.message,"error")}}
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function saveWheelPrize(id){
+  const payload={action:'update_wheel_prize',id,label:document.getElementById(`wp_${id}_label`).value,weight:parseFloat(document.getElementById(`wp_${id}_weight`).value),prize_value:parseFloat(document.getElementById(`wp_${id}_value`).value),is_active:document.getElementById(`wp_${id}_active`).checked};
+  if(!Number.isFinite(payload.weight)||payload.weight<0||payload.weight>100||!Number.isFinite(payload.prize_value)||payload.prize_value<0){setNotice('⛔ تحقق من قيمة الجائزة والاحتمال (0–100)','error');return}
+  try{await apiPost(FEATURES_API,payload);setNotice('✔️ تم حفظ الجائزة');loadFeatures()}catch(e){setNotice('⛔ '+e.message,'error')}
+}
 async function saveWheel(){
   const fixed=[[0,1,'PINGO'],[0,1,'0%'],[1,1,'+1%'],[2,1,'+2%'],[0,1,'0%'],[3,1,'+3%'],[4,1,'+4%'],[0,1,'0%']];
   const segments=[];
